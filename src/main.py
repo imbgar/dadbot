@@ -59,8 +59,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--model-id",
         type=str,
-        default="rf-detr-base",
-        help="Roboflow model ID",
+        default="yolov8n-640",
+        help="Roboflow model ID (e.g., yolov8n-640, yolov8x-1280)",
     )
     parser.add_argument(
         "--confidence",

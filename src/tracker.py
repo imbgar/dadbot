@@ -129,8 +129,9 @@ class VehicleTracker:
             detections = self.byte_track.update_with_detections(detections)
 
         # Update vehicle class mapping
+        tracker_ids = detections.tracker_id if detections.tracker_id is not None else []
         for i, (tracker_id, vehicle_class) in enumerate(
-            zip(detections.tracker_id or [], detection_result.vehicle_classes)
+            zip(tracker_ids, detection_result.vehicle_classes)
         ):
             if tracker_id is not None:
                 self._last_vehicle_classes[tracker_id] = vehicle_class

@@ -95,10 +95,11 @@ class DetectionConfig(BaseSettings):
         str | None, Field(description="Roboflow API key for cloud inference")
     ] = None
 
-    # Model selection
+    # Model selection - use YOLOv8 with COCO classes
+    # Format: yolov8{n,s,m,l,x}-{resolution} e.g., yolov8n-640, yolov8x-1280
     model_id: Annotated[
         str, Field(description="Roboflow model ID")
-    ] = "rf-detr-base"
+    ] = "yolov8n-640"
 
     # Detection thresholds
     confidence_threshold: Annotated[

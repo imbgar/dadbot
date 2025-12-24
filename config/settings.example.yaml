@@ -1,0 +1,73 @@
+# DadBot Traffic Monitor - Configuration File
+# Copy this to ~/.dadbot/settings.yaml or specify with --config flag
+
+# Road Zone Filtering
+# Defines the polygon area where vehicles are detected
+zone:
+  enabled: true
+  polygon_points:
+    - [3, 287]      # Top-left of road
+    - [1078, 412]   # Top-right of road
+    - [1081, 554]   # Bottom-right of road
+    - [4, 411]      # Bottom-left of road
+  show_overlay: true
+  overlay_color: [0, 255, 255]  # BGR: Yellow
+  overlay_opacity: 0.2
+
+# Speed Calibration
+# Based on known reference measurement (e.g., truck length)
+calibration:
+  reference_distance_feet: 20.16  # Known real-world distance
+  reference_pixel_start_x: 0      # Pixel start of measurement
+  reference_pixel_end_x: 269      # Pixel end of measurement
+  reference_pixel_y: 400          # Y-coordinate of measurement line
+
+# Object Detection
+detection:
+  model_id: "rfdetr-base"         # Options: rfdetr-base, rfdetr-large, yolov8n-640
+  confidence_threshold: 0.3       # Minimum detection confidence (0.0-1.0)
+  iou_threshold: 0.5              # NMS IOU threshold (0.0-1.0)
+
+# Vehicle Tracking
+tracking:
+  min_frames_for_speed: 10        # Frames needed before calculating speed
+  track_buffer: 30                # Frames to keep lost tracks
+  speed_limit_mph: 25.0           # Speed limit for violation detection
+  commercial_vehicle_min_length_feet: 25.0  # Minimum length for commercial classification
+
+# Visualization Settings
+visualization:
+  # Trail/trace settings
+  lead_corner_mode: "direction_based"  # Options: direction_based, center_bottom, center, bottom_left, bottom_right
+  trace_length_seconds: 2.0
+  show_traces: true
+
+  # Label settings
+  label_mode: "full"              # Options: full, speed_only, id_speed, minimal, none
+  show_labels: true
+
+  # Bounding box settings
+  show_bounding_boxes: true
+  highlight_violations: true
+
+  # Overlay settings
+  show_zone_overlay: true
+  show_calibration_overlay: false
+  show_stats_overlay: true
+
+  # Colors (BGR format)
+  color_eastbound: [0, 255, 0]    # Green
+  color_westbound: [255, 0, 0]    # Blue
+  color_violation: [0, 0, 255]    # Red
+  color_unknown: [128, 128, 128]  # Gray
+
+# Reporting
+reporting:
+  output_dir: "./output"
+  aggregation_window_seconds: 300  # 5 minutes
+  left_to_right_label: "eastbound"
+  right_to_left_label: "westbound"
+
+# GUI State (managed automatically)
+last_video_path: null
+last_output_path: null

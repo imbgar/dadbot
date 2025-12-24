@@ -25,6 +25,11 @@ class ActionButton(ttk.Frame):
         self.command = command
         self._hover = False
 
+        # Store content for redrawing
+        self._title = title
+        self._description = description
+        self._icon = icon
+
         # Create canvas for custom drawing
         self.canvas = tk.Canvas(
             self,
@@ -42,14 +47,14 @@ class ActionButton(ttk.Frame):
         self.accent_color = COLORS["accent"] if accent else COLORS["text_secondary"]
 
         # Draw content
-        self._draw_content(title, description, icon)
+        self._draw_content()
 
         # Bind events
         self.canvas.bind("<Enter>", self._on_enter)
         self.canvas.bind("<Leave>", self._on_leave)
         self.canvas.bind("<Button-1>", self._on_click)
 
-    def _draw_content(self, title: str, description: str, icon: str):
+    def _draw_content(self):
         """Draw button content."""
         self.canvas.delete("all")
 
@@ -66,7 +71,7 @@ class ActionButton(ttk.Frame):
         # Icon (emoji)
         self.canvas.create_text(
             30, 50,
-            text=icon,
+            text=self._icon,
             font=("Segoe UI Emoji", 24),
             fill=self.accent_color,
             anchor="center",
@@ -75,7 +80,7 @@ class ActionButton(ttk.Frame):
         # Title
         self.canvas.create_text(
             70, 35,
-            text=title,
+            text=self._title,
             font=FONTS["subheading"],
             fill=COLORS["text_primary"],
             anchor="w",
@@ -84,7 +89,7 @@ class ActionButton(ttk.Frame):
         # Description
         self.canvas.create_text(
             70, 60,
-            text=description,
+            text=self._description,
             font=FONTS["small"],
             fill=COLORS["text_secondary"],
             anchor="w",
@@ -93,19 +98,11 @@ class ActionButton(ttk.Frame):
 
     def _on_enter(self, event):
         self._hover = True
-        self._draw_content(
-            self.canvas.itemcget(2, "text"),
-            self.canvas.itemcget(3, "text"),
-            self.canvas.itemcget(1, "text"),
-        )
+        self._draw_content()
 
     def _on_leave(self, event):
         self._hover = False
-        self._draw_content(
-            self.canvas.itemcget(2, "text"),
-            self.canvas.itemcget(3, "text"),
-            self.canvas.itemcget(1, "text"),
-        )
+        self._draw_content()
 
     def _on_click(self, event):
         if self.command:

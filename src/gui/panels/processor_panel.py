@@ -99,14 +99,6 @@ class ProcessorPanel(ttk.Frame):
             style="Modern.TCheckbutton",
         ).pack(side="left", padx=10)
 
-        self.show_preview_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            options_row,
-            text="Show live preview",
-            variable=self.show_preview_var,
-            style="Modern.TCheckbutton",
-        ).pack(side="left", padx=10)
-
         # Action buttons row
         action_row = ttk.Frame(settings_inner, style="CardInner.TFrame")
         action_row.pack(fill="x", pady=10)
@@ -294,8 +286,9 @@ class ProcessorPanel(ttk.Frame):
                 show_zone=self.settings.visualization.show_zone_overlay,
             )
 
+            # Note: OpenCV imshow conflicts with tkinter, so disable preview in GUI mode
             visualization = VisualizationConfig(
-                show_preview=self.show_preview_var.get(),
+                show_preview=False,
                 save_video=self.save_video_var.get(),
             )
 

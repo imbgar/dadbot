@@ -1,6 +1,5 @@
 """Live Viewer Panel for DadBot Traffic Monitor."""
 
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -8,11 +7,22 @@ from typing import Callable
 
 import cv2
 import numpy as np
+import supervision as sv
 from PIL import Image, ImageTk
 
+from src.config import (
+    CalibrationConfig,
+    DetectionConfig,
+    TrackingConfig,
+    VisualizationConfig,
+    ZoneConfig,
+)
+from src.detector import VehicleDetector
 from src.gui.styles import COLORS, FONTS
 from src.settings import AppSettings, LeadCornerMode, LabelDisplayMode
+from src.tracker import VehicleTracker
 from src.utils import get_video_info
+from src.visualizer import TrafficVisualizer
 
 
 class LiveViewerPanel(ttk.Frame):
@@ -35,6 +45,16 @@ class LiveViewerPanel(ttk.Frame):
         self.running = False
         self.photo_image = None
         self.frame_delay = 33  # ~30fps
+        self.total_frames = 0
+        self.frame_index = 0
+
+        # ML pipeline components (lazy initialized)
+        self.detector: VehicleDetector | None = None
+        self.tracker: VehicleTracker | None = None
+        self.visualizer: TrafficVisualizer | None = None
+        self.video_info: sv.VideoInfo | None = None
+        self._pipeline_initialized = False
+        self._pipeline_error: str | None = None
 
         self._create_layout()
 
@@ -297,6 +317,87 @@ class LiveViewerPanel(ttk.Frame):
 
         ttk.Label(speed_frame, text="mph", style="Muted.TLabel").pack(side="left", padx=5)
 
+    def _settings_to_configs(self) -> tuple[
+        DetectionConfig, CalibrationConfig, TrackingConfig, VisualizationConfig, ZoneConfig
+    ]:
+        """Convert AppSettings to config objects for ML pipeline."""
+        detection_config = DetectionConfig(
+            model_id=self.settings.detection.model_id,
+            confidence_threshold=self.settings.detection.confidence_threshold,
+            iou_threshold=self.settings.detection.iou_threshold,
+        )
+
+        calibration_config = CalibrationConfig(
+            reference_distance_feet=self.settings.calibration.reference_distance_feet,
+            reference_pixel_start_x=self.settings.calibration.reference_pixel_start_x,
+            reference_pixel_end_x=self.settings.calibration.reference_pixel_end_x,
+            reference_pixel_y=self.settings.calibration.reference_pixel_y,
+        )
+
+        tracking_config = TrackingConfig(
+            min_frames_for_speed=self.settings.tracking.min_frames_for_speed,
+            track_buffer=self.settings.tracking.track_buffer,
+            speed_limit_mph=self.settings.tracking.speed_limit_mph,
+            commercial_vehicle_min_length_feet=self.settings.tracking.commercial_vehicle_min_length_feet,
+        )
+
+        vis_config = VisualizationConfig(
+            show_preview=True,
+            show_calibration_zone=self.settings.visualization.show_calibration_overlay,
+            trace_length_seconds=self.settings.visualization.trace_length_seconds,
+        )
+
+        zone_config = ZoneConfig(
+            enabled=self.settings.zone.enabled,
+            polygon_points=self.settings.zone.polygon_points,
+            show_zone=self.settings.visualization.show_zone_overlay,
+        )
+
+        return detection_config, calibration_config, tracking_config, vis_config, zone_config
+
+    def _init_pipeline(self, fps: float) -> None:
+        """Initialize the ML pipeline components."""
+        try:
+            detection_cfg, calibration_cfg, tracking_cfg, vis_cfg, zone_cfg = self._settings_to_configs()
+
+            # Initialize detector
+            self.detector = VehicleDetector(
+                config=detection_cfg,
+                zone_config=zone_cfg,
+            )
+
+            # Initialize tracker
+            self.tracker = VehicleTracker(
+                calibration_config=calibration_cfg,
+                tracking_config=tracking_cfg,
+                fps=fps,
+            )
+
+            # Initialize visualizer
+            self.visualizer = TrafficVisualizer(
+                video_info=self.video_info,
+                vis_config=vis_cfg,
+                calibration_config=calibration_cfg,
+                tracking_config=tracking_cfg,
+                zone_config=zone_cfg,
+            )
+
+            self._pipeline_initialized = True
+            self._pipeline_error = None
+
+        except Exception as e:
+            self._pipeline_initialized = False
+            self._pipeline_error = str(e)
+
+    def _reset_pipeline(self) -> None:
+        """Reset the ML pipeline for a new video."""
+        self.detector = None
+        self.tracker = None
+        self.visualizer = None
+        self._pipeline_initialized = False
+        self._pipeline_error = None
+        self.frame_index = 0
+
     def _load_video(self):
         """Load a video file."""
         filetypes = [
@@ -319,6 +420,7 @@ class LiveViewerPanel(ttk.Frame):
 
         try:
             self._stop_video()
+            self._reset_pipeline()
 
             self.cap = cv2.VideoCapture(path)
             if not self.cap.isOpened():
@@ -334,6 +436,24 @@ class LiveViewerPanel(ttk.Frame):
 
             self.frame_delay = int(1000 / info['fps'])
             self.total_frames = info['total_frames']
+            fps = info['fps']
+
+            # Create VideoInfo for visualizer
+            self.video_info = sv.VideoInfo(
+                width=info['width'],
+                height=info['height'],
+                fps=fps,
+                total_frames=info['total_frames'],
+            )
+
+            # Initialize ML pipeline
+            self._init_pipeline(fps)
+
+            if self._pipeline_error:
+                self.video_info_label.configure(
+                    text=f"{Path(path).name}\n{info['width']}x{info['height']} @ {fps:.1f}fps\nML: {self._pipeline_error}",
+                    fg=COLORS["warning"],
+                )
 
             self.settings.last_video_path = path
             self.on_change()
@@ -369,10 +489,14 @@ class LiveViewerPanel(ttk.Frame):
         else:
             # Video ended, loop back
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            self.frame_index = 0
+            # Reset tracker for fresh start
+            if self.tracker:
+                self.tracker.reset()
             self.after(self.frame_delay, self._play_loop)
 
     def _show_frame(self) -> bool:
-        """Show the current frame."""
+        """Show the current frame with full ML annotation pipeline."""
         if self.cap is None:
             return False
 
@@ -380,12 +504,29 @@ class LiveViewerPanel(ttk.Frame):
         if not ret:
             return False
 
-        current_frame = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
-        self.frame_label.configure(text=f"Frame: {current_frame} / {self.total_frames}")
+        self.frame_label.configure(text=f"Frame: {self.frame_index} / {self.total_frames}")
 
-        # Apply visualization settings (simplified - just zone overlay for now)
-        if self.show_zone_var.get() and self.settings.zone.polygon_points:
-            frame = self._draw_zone_overlay(frame)
+        # Run ML pipeline if initialized
+        if self._pipeline_initialized and self.detector and self.tracker and self.visualizer:
+            try:
+                # Detect vehicles
+                detection_result = self.detector.detect(frame, self.frame_index)
+
+                # Track vehicles
+                tracking_result = self.tracker.update(detection_result)
+
+                # Annotate frame
+                frame = self.visualizer.annotate_frame(frame, tracking_result)
+            except Exception:
+                # Fall back to simple zone overlay on error
+                if self.show_zone_var.get() and self.settings.zone.polygon_points:
+                    frame = self._draw_zone_overlay(frame)
+        else:
+            # No ML pipeline - just draw zone overlay if enabled
+            if self.show_zone_var.get() and self.settings.zone.polygon_points:
+                frame = self._draw_zone_overlay(frame)
+
+        self.frame_index += 1
 
         # Resize to fit canvas
         canvas_w = self.canvas.winfo_width()
@@ -410,7 +551,7 @@ class LiveViewerPanel(ttk.Frame):
         return True
 
     def _draw_zone_overlay(self, frame: np.ndarray) -> np.ndarray:
-        """Draw zone overlay on frame."""
+        """Draw zone overlay on frame (fallback when ML pipeline not available)."""
         points = self.settings.zone.polygon_points
         if not points or len(points) < 3:
             return frame
@@ -471,4 +612,7 @@ class LiveViewerPanel(ttk.Frame):
     def destroy(self):
         """Clean up resources."""
         self._stop_video()
+        if self.visualizer:
+            self.visualizer.cleanup()
+        self._reset_pipeline()
         super().destroy()

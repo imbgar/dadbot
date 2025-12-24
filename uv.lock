@@ -359,34 +359,6 @@ wheels = [
 ]
 
 [[package]]
-name = "cairocffi"
-version = "1.7.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cffi" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/70/c5/1a4dc131459e68a173cbdab5fad6b524f53f9c1ef7861b7698e998b837cc/cairocffi-1.7.1.tar.gz", hash = "sha256:2e48ee864884ec4a3a34bfa8c9ab9999f688286eb714a15a43ec9d068c36557b", size = 88096, upload-time = "2024-06-18T10:56:06.741Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/d8/ba13451aa6b745c49536e87b6bf8f629b950e84bd0e8308f7dc6883b67e2/cairocffi-1.7.1-py3-none-any.whl", hash = "sha256:9803a0e11f6c962f3b0ae2ec8ba6ae45e957a146a004697a1ac1bbf16b073b3f", size = 75611, upload-time = "2024-06-18T10:55:59.489Z" },
-]
-
-[[package]]
-name = "cairosvg"
-version = "2.8.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cairocffi" },
-    { name = "cssselect2" },
-    { name = "defusedxml" },
-    { name = "pillow" },
-    { name = "tinycss2" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/b9/5106168bd43d7cd8b7cc2a2ee465b385f14b63f4c092bb89eee2d48c8e67/cairosvg-2.8.2.tar.gz", hash = "sha256:07cbf4e86317b27a92318a4cac2a4bb37a5e9c1b8a27355d06874b22f85bef9f", size = 8398590, upload-time = "2025-05-15T06:56:32.653Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/48/816bd4aaae93dbf9e408c58598bc32f4a8c65f4b86ab560864cb3ee60adb/cairosvg-2.8.2-py3-none-any.whl", hash = "sha256:eab46dad4674f33267a671dce39b64be245911c901c70d65d2b7b0821e852bf5", size = 45773, upload-time = "2025-05-15T06:56:28.552Z" },
-]
-
-[[package]]
 name = "certifi"
 version = "2025.11.12"
 source = { registry = "https://pypi.org/simple" }
@@ -739,19 +711,6 @@ wheels = [
 ]
 
 [[package]]
-name = "cssselect2"
-version = "0.8.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "tinycss2" },
-    { name = "webencodings" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/86/fd7f58fc498b3166f3a7e8e0cddb6e620fe1da35b02248b1bd59e95dbaaa/cssselect2-0.8.0.tar.gz", hash = "sha256:7674ffb954a3b46162392aee2a3a0aedb2e14ecf99fcc28644900f4e6e3e9d3a", size = 35716, upload-time = "2025-03-05T14:46:07.988Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/e7/aa315e6a749d9b96c2504a1ba0ba031ba2d0517e972ce22682e3fccecb09/cssselect2-0.8.0-py3-none-any.whl", hash = "sha256:46fc70ebc41ced7a32cd42d58b1884d72ade23d21e5a4eaaf022401c13f0e76e", size = 15454, upload-time = "2025-03-05T14:46:06.463Z" },
-]
-
-[[package]]
 name = "cycler"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -790,7 +749,6 @@ name = "dadbot"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "cairosvg" },
     { name = "inference" },
     { name = "numpy" },
     { name = "opencv-python" },
@@ -800,7 +758,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "supervision" },
-    { name = "tkinterweb" },
 ]
 
 [package.optional-dependencies]
@@ -812,7 +769,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cairosvg", specifier = ">=2.8.2" },
     { name = "inference", specifier = ">=0.38.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "opencv-python", specifier = ">=4.8.0" },
@@ -825,7 +781,6 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "supervision", specifier = ">=0.25.0" },
-    { name = "tkinterweb", specifier = ">=3.24.0" },
 ]
 provides-extras = ["dev"]
 
@@ -3813,47 +3768,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tinycss2"
-version = "1.5.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "webencodings" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/ae/2ca4913e5c0f09781d75482874c3a95db9105462a92ddd303c7d285d3df2/tinycss2-1.5.1.tar.gz", hash = "sha256:d339d2b616ba90ccce58da8495a78f46e55d4d25f9fd71dfd526f07e7d53f957", size = 88195, upload-time = "2025-11-23T10:29:10.082Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/45/c7b5c3168458db837e8ceab06dc77824e18202679d0463f0e8f002143a97/tinycss2-1.5.1-py3-none-any.whl", hash = "sha256:3415ba0f5839c062696996998176c4a3751d18b7edaaeeb658c9ce21ec150661", size = 28404, upload-time = "2025-11-23T10:29:08.676Z" },
-]
-
-[[package]]
-name = "tkinterweb"
-version = "4.11.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "tkinterweb-tkhtml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/48/9e4a993b7571c8ef85dfea675c6d5d424ad1ed4b5a44d5368a17f04ce3e5/tkinterweb-4.11.0.tar.gz", hash = "sha256:1ad412f2b447fcc59190b06d90728ff4aa153fa68ec16251ca101557cd7d81fe", size = 179676, upload-time = "2025-12-18T17:30:45.11Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/21/5ae16e226b10215e81db851a8e735dfeecbda30a8c6bbd1912e802a5264e/tkinterweb-4.11.0-py3-none-any.whl", hash = "sha256:f9997f9f6976330eadc5c01dc3796ab6f369b6e3cd8c080e5b1d21ab275000f3", size = 181775, upload-time = "2025-12-18T17:30:40.542Z" },
-]
-
-[[package]]
-name = "tkinterweb-tkhtml"
-version = "2.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/af/39/4d45ab62bb67955f70bdf7cbe7a9147babd6923ee801abd6efea94fcd38e/tkinterweb_tkhtml-2.1.0.tar.gz", hash = "sha256:d0b0acf46ae841f665c1bcf5feaf47ab74bae40071d47b12fe7e3a694536b2ec", size = 1440264, upload-time = "2025-12-12T16:03:52.189Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/7e/af7054fc72d136ab347d8e21499827f5fd1af6a1ad95fc3f3a8a9228bab8/tkinterweb_tkhtml-2.1.0-py3-none-any.whl", hash = "sha256:8b09650de74bd396692a7bc77f0d77e0fe571b9bd3b13b2930f649d57b0f1ae9", size = 1447578, upload-time = "2025-12-12T15:53:10.655Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/33/1d6afaf987ca8f970cdbca59e07be2769f1a7ab94f861110bd7951a30ede/tkinterweb_tkhtml-2.1.0-py3-none-linux_armv7l.whl", hash = "sha256:bda709e7bead0718977bd6e4bce3c7c630c38c92758a8f5001fce9cab64842ab", size = 152971, upload-time = "2025-12-12T15:53:13.542Z" },
-    { url = "https://files.pythonhosted.org/packages/07/85/95f9894386859dbc22461471e1c778b536ee56ab433da92b942d30c9637e/tkinterweb_tkhtml-2.1.0-py3-none-macosx_10_6_x86_64.whl", hash = "sha256:2b69d1cedc58de38bc6036d78682d0757932a04e70bef28cf66794330a2e1204", size = 134788, upload-time = "2025-12-12T15:53:15.806Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/29/428845f390ef89ee360f9f4915b9400d24e225badf834c1c212d61451fcc/tkinterweb_tkhtml-2.1.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:3d0cb02b6559e7ffacafd76ab905101a1df241334a0fbf3784a09a2e77cce342", size = 131237, upload-time = "2025-12-12T15:53:18.063Z" },
-    { url = "https://files.pythonhosted.org/packages/f7/ec/dc7713b3ec3875a77c2c540e2c0b27ae68ccadb5553f3cbd86a0b7e0ffc7/tkinterweb_tkhtml-2.1.0-py3-none-manylinux1_i686.whl", hash = "sha256:e72cef8a008a190fe07c58f27a871ae8b2084bbadee76e930346d7d3d3ca3fbf", size = 185419, upload-time = "2025-12-12T15:53:20.597Z" },
-    { url = "https://files.pythonhosted.org/packages/75/38/9e632690581fc70909a8afbe911ffd877d8bf607d5483b486cd1272467ea/tkinterweb_tkhtml-2.1.0-py3-none-manylinux1_x86_64.whl", hash = "sha256:46930a9d2563d4936faee9e30d1cc1a84e8e640bdb3e3567446c08d36cb0c52b", size = 172135, upload-time = "2025-12-12T15:53:29.388Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/a7/36f63618a7fc83592f0ab1488056a51ac0b4cd83661ab657d0523e5a2083/tkinterweb_tkhtml-2.1.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:7fdb35cdb1b4e34a1d954efb6c9b611322aa424275207a90690473789451637b", size = 169414, upload-time = "2025-12-12T15:53:31.816Z" },
-    { url = "https://files.pythonhosted.org/packages/88/4f/cc2c5de1fbc84c53b22617db3aaac25f6248b24d5172d46b212349619509/tkinterweb_tkhtml-2.1.0-py3-none-win32.whl", hash = "sha256:42f14a294b176dbfad05292fdd7894024fc8f3e44664982c6af2512a7f939677", size = 269057, upload-time = "2025-12-12T15:53:35.374Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/89/c003e5112fb6da0aee2184d0d377984bfeaa44a8b158d1b11fdca35ef377/tkinterweb_tkhtml-2.1.0-py3-none-win_amd64.whl", hash = "sha256:f03ce10affe8f20aa52ed514bde0ade26cf647f8eb824988e38874d8e6f599a0", size = 269546, upload-time = "2025-12-12T15:53:39.614Z" },
-]
-
-[[package]]
 name = "tldextract"
 version = "5.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -4123,15 +4037,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/24/30/6b0809f4510673dc723187aeaf24c7f5459922d01e2f794277a3dfb90345/wcwidth-0.2.14.tar.gz", hash = "sha256:4d478375d31bc5395a3c55c40ccdf3354688364cd61c4f6adacaa9215d0b3605", size = 102293, upload-time = "2025-09-22T16:29:53.023Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/b5/123f13c975e9f27ab9c0770f514345bd406d0e8d3b7a0723af9d43f710af/wcwidth-0.2.14-py2.py3-none-any.whl", hash = "sha256:a7bb560c8aee30f9957e5f9895805edd20602f2d7f720186dfd906e82b4982e1", size = 37286, upload-time = "2025-09-22T16:29:51.641Z" },
-]
-
-[[package]]
-name = "webencodings"
-version = "0.5.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0b/02/ae6ceac1baeda530866a85075641cec12989bd8d31af6d5ab4a3e8c92f47/webencodings-0.5.1.tar.gz", hash = "sha256:b36a1c245f2d304965eb4e0a82848379241dc04b865afcc4aab16748587e1923", size = 9721, upload-time = "2017-04-05T20:21:34.189Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/24/2a3e3df732393fed8b3ebf2ec078f05546de641fe1b667ee316ec1dcf3b7/webencodings-0.5.1-py2.py3-none-any.whl", hash = "sha256:a0af1213f3c2226497a97e2b3aa01a7e4bee4f403f95be16fc9acd2947514a78", size = 11774, upload-time = "2017-04-05T20:21:32.581Z" },
 ]
 
 [[package]]

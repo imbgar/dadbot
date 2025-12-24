@@ -343,10 +343,6 @@ class ProcessorPanel(ttk.Frame):
                     self.output_queue.put(("warning", "Processing stopped by user"))
                     break
 
-                # Update progress
-                progress = (frame_index / total_frames) * 100
-                self.output_queue.put(("progress", progress))
-
                 # Detect, track, record
                 detection_result = detector.detect(frame, frame_index)
                 tracking_result = tracker.update(detection_result)
@@ -360,20 +356,19 @@ class ProcessorPanel(ttk.Frame):
                 if visualization.save_video:
                     visualizer.write_frame(annotated_frame)
 
-                if visualization.show_preview:
-                    if not visualizer.show_frame(annotated_frame):
-                        self.processing = False
-                        break
+                # Log progress periodically (every 50 frames to reduce overhead)
+                if frame_index > 0 and frame_index % 50 == 0:
+                    progress = (frame_index / total_frames) * 100
+                    self.output_queue.put(("progress", progress))
 
-                # Log progress periodically
-                if frame_index > 0 and frame_index % 100 == 0:
-                    summary = reporter.get_summary()
-                    self.output_queue.put((
-                        "info",
-                        f"Frame {frame_index}/{total_frames} | "
-                        f"Vehicles: {summary.get('vehicles_counted', 0)} | "
-                        f"Violations: {summary.get('violations', 0)}"
-                    ))
+                    if frame_index % 100 == 0:
+                        summary = reporter.get_summary()
+                        self.output_queue.put((
+                            "info",
+                            f"Frame {frame_index}/{total_frames} | "
+                            f"Vehicles: {summary.get('vehicles_counted', 0)} | "
+                            f"Violations: {summary.get('violations', 0)}"
+                        ))
 
             # Finalize
             self.output_queue.put(("info", ""))

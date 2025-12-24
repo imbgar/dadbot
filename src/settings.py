@@ -122,6 +122,7 @@ class AppSettings(BaseModel):
     # Last used paths (for GUI convenience)
     last_video_path: str | None = None
     last_output_path: str | None = None
+    last_rtsp_url: str | None = None
 
     def save(self, path: str | Path) -> None:
         """Save settings to a YAML file.

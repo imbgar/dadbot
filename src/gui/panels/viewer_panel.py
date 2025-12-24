@@ -48,6 +48,13 @@ class LiveViewerPanel(ttk.Frame):
         self.total_frames = 0
         self.frame_index = 0
 
+        # RTSP stream state
+        self.is_rtsp_mode = False
+        self.rtsp_url: str | None = None
+        self.rtsp_reconnect_attempts = 0
+        self.rtsp_max_reconnects = 5
+        self.rtsp_reconnect_delay = 2000  # ms
+
         # ML pipeline components (lazy initialized)
         self.detector: VehicleDetector | None = None
         self.tracker: VehicleTracker | None = None
@@ -153,23 +160,76 @@ class LiveViewerPanel(ttk.Frame):
         self._create_detection_section(scrollable_frame)
 
     def _create_video_section(self, parent):
-        """Create video loading section."""
+        """Create video/RTSP source section."""
         section = ttk.LabelFrame(parent, text="Video Source", style="Card.TLabelframe")
         section.pack(fill="x", padx=10, pady=10)
 
         inner = ttk.Frame(section, style="CardInner.TFrame")
         inner.pack(fill="x", padx=10, pady=10)
 
+        # File loading
         load_btn = ttk.Button(
             inner,
-            text="📁 Load Video",
+            text="📁 Load Video File",
             command=self._load_video,
         )
         load_btn.pack(fill="x", pady=5)
 
+        ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=10)
+
+        # RTSP section
+        ttk.Label(inner, text="RTSP Stream:", style="Body.TLabel").pack(anchor="w")
+
+        self.rtsp_var = tk.StringVar(value=self.settings.last_rtsp_url or "")
+        rtsp_entry = tk.Entry(
+            inner,
+            textvariable=self.rtsp_var,
+            font=FONTS["small"],
+            bg=COLORS["bg_dark"],
+            fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],  # Cursor color
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            highlightcolor=COLORS["accent"],
+        )
+        rtsp_entry.pack(fill="x", pady=5, ipady=4)
+        rtsp_entry.bind("<Return>", lambda e: self._connect_rtsp())
+
+        # RTSP buttons
+        rtsp_btns = ttk.Frame(inner, style="CardInner.TFrame")
+        rtsp_btns.pack(fill="x", pady=5)
+
+        self.rtsp_connect_btn = ttk.Button(
+            rtsp_btns,
+            text="▶ Connect",
+            command=self._connect_rtsp,
+        )
+        self.rtsp_connect_btn.pack(side="left", fill="x", expand=True, padx=(0, 2))
+
+        self.rtsp_disconnect_btn = ttk.Button(
+            rtsp_btns,
+            text="⏹ Disconnect",
+            command=self._disconnect_rtsp,
+            state="disabled",
+        )
+        self.rtsp_disconnect_btn.pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+        # Hint
+        tk.Label(
+            inner,
+            text="e.g., rtsp://user:pass@192.168.1.100:554/stream",
+            font=FONTS["small"],
+            fg=COLORS["text_muted"],
+            bg=COLORS["bg_medium"],
+        ).pack(anchor="w")
+
+        ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=10)
+
+        # Status label
         self.video_info_label = tk.Label(
             inner,
-            text="No video loaded",
+            text="No source connected",
             font=FONTS["small"],
             fg=COLORS["text_muted"],
             bg=COLORS["bg_medium"],
@@ -421,6 +481,7 @@ class LiveViewerPanel(ttk.Frame):
         try:
             self._stop_video()
             self._reset_pipeline()
+            self.is_rtsp_mode = False
 
             self.cap = cv2.VideoCapture(path)
             if not self.cap.isOpened():
@@ -464,6 +525,183 @@ class LiveViewerPanel(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load video: {e}")
 
+    def _connect_rtsp(self):
+        """Connect to an RTSP stream."""
+        url = self.rtsp_var.get().strip()
+        if not url:
+            messagebox.showwarning("Warning", "Please enter an RTSP URL")
+            return
+
+        # Validate URL format
+        if not url.startswith(("rtsp://", "rtsps://", "http://", "https://")):
+            messagebox.showwarning(
+                "Warning",
+                "URL should start with rtsp://, rtsps://, http://, or https://"
+            )
+            return
+
+        try:
+            self._stop_video()
+            self._reset_pipeline()
+            self.is_rtsp_mode = True
+            self.rtsp_url = url
+            self.rtsp_reconnect_attempts = 0
+
+            self.video_info_label.configure(
+                text="Connecting to stream...",
+                fg=COLORS["text_secondary"],
+            )
+            self.update_idletasks()
+
+            # Connect to RTSP stream
+            self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+
+            # Set buffer size to reduce latency
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            if not self.cap.isOpened():
+                raise ValueError("Could not connect to stream")
+
+            # Get stream properties
+            width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
+
+            # Create VideoInfo for visualizer
+            self.video_info = sv.VideoInfo(
+                width=width,
+                height=height,
+                fps=fps,
+                total_frames=0,  # Unknown for streams
+            )
+
+            self.frame_delay = int(1000 / fps)
+            self.total_frames = 0
+
+            # Initialize ML pipeline
+            self._init_pipeline(fps)
+
+            # Update UI
+            status = f"RTSP Stream\n{width}x{height} @ {fps:.1f}fps"
+            if self._pipeline_error:
+                status += f"\nML: {self._pipeline_error}"
+                self.video_info_label.configure(text=status, fg=COLORS["warning"])
+            else:
+                status += "\nML: Ready"
+                self.video_info_label.configure(text=status, fg=COLORS["success"])
+
+            # Update button states
+            self.rtsp_connect_btn.configure(state="disabled")
+            self.rtsp_disconnect_btn.configure(state="normal")
+
+            # Save URL for next session
+            self.settings.last_rtsp_url = url
+            self.on_change()
+
+            # Start playback automatically
+            self.running = True
+            self.play_btn.configure(text="⏸ Pause")
+            self._play_loop()
+
+        except Exception as e:
+            self.is_rtsp_mode = False
+            self.rtsp_url = None
+            self.video_info_label.configure(
+                text=f"Connection failed:\n{e}",
+                fg=COLORS["error"],
+            )
+            if self.cap:
+                self.cap.release()
+                self.cap = None
+
+    def _disconnect_rtsp(self):
+        """Disconnect from RTSP stream."""
+        self._stop_video()
+        self.is_rtsp_mode = False
+        self.rtsp_url = None
+        self.rtsp_reconnect_attempts = 0
+
+        # Update button states
+        self.rtsp_connect_btn.configure(state="normal")
+        self.rtsp_disconnect_btn.configure(state="disabled")
+
+        self.video_info_label.configure(
+            text="Disconnected",
+            fg=COLORS["text_muted"],
+        )
+
+        # Clear the canvas
+        self.canvas.delete("all")
+        self.canvas.create_text(
+            400, 300,
+            text="Load a video or connect to RTSP stream",
+            font=FONTS["body"],
+            fill=COLORS["text_muted"],
+            tags="placeholder",
+        )
+
+    def _attempt_rtsp_reconnect(self):
+        """Attempt to reconnect to RTSP stream after failure."""
+        if not self.is_rtsp_mode or not self.rtsp_url:
+            return
+
+        self.rtsp_reconnect_attempts += 1
+
+        if self.rtsp_reconnect_attempts > self.rtsp_max_reconnects:
+            self.video_info_label.configure(
+                text=f"Stream lost. Max reconnect attempts ({self.rtsp_max_reconnects}) exceeded.",
+                fg=COLORS["error"],
+            )
+            self._disconnect_rtsp()
+            return
+
+        self.video_info_label.configure(
+            text=f"Stream interrupted. Reconnecting... ({self.rtsp_reconnect_attempts}/{self.rtsp_max_reconnects})",
+            fg=COLORS["warning"],
+        )
+
+        # Release old capture
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+
+        # Reset tracker for fresh start
+        if self.tracker:
+            self.tracker.reset()
+        self.frame_index = 0
+
+        # Schedule reconnection attempt
+        self.after(self.rtsp_reconnect_delay, self._do_rtsp_reconnect)
+
+    def _do_rtsp_reconnect(self):
+        """Perform the actual RTSP reconnection."""
+        if not self.is_rtsp_mode or not self.rtsp_url:
+            return
+
+        try:
+            self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            if not self.cap.isOpened():
+                raise ValueError("Reconnection failed")
+
+            # Reset reconnect counter on success
+            self.rtsp_reconnect_attempts = 0
+
+            self.video_info_label.configure(
+                text=f"RTSP Stream (reconnected)\n{int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}",
+                fg=COLORS["success"],
+            )
+
+            # Resume playback
+            self.running = True
+            self.play_btn.configure(text="⏸ Pause")
+            self._play_loop()
+
+        except Exception:
+            # Try again
+            self._attempt_rtsp_reconnect()
+
     def _toggle_playback(self):
         """Toggle video playback."""
         if self.cap is None:
@@ -487,13 +725,18 @@ class LiveViewerPanel(ttk.Frame):
         if ret:
             self.after(self.frame_delay, self._play_loop)
         else:
-            # Video ended, loop back
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            self.frame_index = 0
-            # Reset tracker for fresh start
-            if self.tracker:
-                self.tracker.reset()
-            self.after(self.frame_delay, self._play_loop)
+            if self.is_rtsp_mode:
+                # RTSP stream failed - attempt reconnection
+                self.running = False
+                self._attempt_rtsp_reconnect()
+            else:
+                # Video ended, loop back to beginning
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                self.frame_index = 0
+                # Reset tracker for fresh start
+                if self.tracker:
+                    self.tracker.reset()
+                self.after(self.frame_delay, self._play_loop)
 
     def _show_frame(self) -> bool:
         """Show the current frame with full ML annotation pipeline."""
@@ -504,7 +747,10 @@ class LiveViewerPanel(ttk.Frame):
         if not ret:
             return False
 
-        self.frame_label.configure(text=f"Frame: {self.frame_index} / {self.total_frames}")
+        if self.is_rtsp_mode:
+            self.frame_label.configure(text=f"LIVE | Frame: {self.frame_index}")
+        else:
+            self.frame_label.configure(text=f"Frame: {self.frame_index} / {self.total_frames}")
 
         # Run ML pipeline if initialized
         if self._pipeline_initialized and self.detector and self.tracker and self.visualizer:

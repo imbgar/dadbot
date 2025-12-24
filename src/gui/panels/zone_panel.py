@@ -41,7 +41,9 @@ class ZoneDefinitionPanel(ttk.Frame):
 
         # Drag state
         self._dragging_index: int | None = None
+        self._dragging_zone = False  # True when dragging entire zone
         self._drag_start_pos: tuple[int, int] | None = None
+        self._drag_start_points: list[tuple[int, int]] | None = None  # Original points when zone drag started
         self._point_hit_radius = 15  # Pixels to detect point click
 
         # Canvas offsets (set during display)
@@ -77,7 +79,7 @@ class ZoneDefinitionPanel(ttk.Frame):
         # Instructions above canvas
         instructions = tk.Label(
             canvas_frame,
-            text="Click to add points • Drag points to move • Right-click to remove last point",
+            text="Click to add points • Drag points to move • Drag inside zone to reposition • Right-click to undo",
             font=FONTS["small"],
             fg=COLORS["text_secondary"],
             bg=COLORS["bg_medium"],
@@ -374,19 +376,51 @@ class ZoneDefinitionPanel(ttk.Frame):
                 return i
         return None
 
+    def _is_inside_polygon(self, canvas_x: int, canvas_y: int) -> bool:
+        """Check if canvas position is inside the zone polygon using ray casting."""
+        if len(self.points) < 3:
+            return False
+
+        # Convert canvas coords to image coords
+        x = (canvas_x - self._x_offset) / self.scale_factor
+        y = (canvas_y - self._y_offset) / self.scale_factor
+
+        # Ray casting algorithm
+        n = len(self.points)
+        inside = False
+
+        j = n - 1
+        for i in range(n):
+            xi, yi = self.points[i]
+            xj, yj = self.points[j]
+
+            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+                inside = not inside
+            j = i
+
+        return inside
+
     def _on_left_click(self, event):
-        """Handle left mouse click to add or start dragging a point."""
+        """Handle left mouse click to add or start dragging a point/zone."""
         if self.original_frame is None:
             return
 
-        # Check if clicking on an existing point
+        # Check if clicking on an existing point (highest priority)
         hit_index = self._get_point_at_position(event.x, event.y)
 
         if hit_index is not None:
             # Start dragging this point
             self._dragging_index = hit_index
+            self._dragging_zone = False
             self._drag_start_pos = (event.x, event.y)
             self.canvas.configure(cursor="fleur")  # Move cursor
+        elif self._is_inside_polygon(event.x, event.y):
+            # Start dragging the entire zone
+            self._dragging_zone = True
+            self._dragging_index = None
+            self._drag_start_pos = (event.x, event.y)
+            self._drag_start_points = list(self.points)  # Copy original points
+            self.canvas.configure(cursor="fleur")
         else:
             # Add a new point
             x = int((event.x - self._x_offset) / self.scale_factor)
@@ -400,39 +434,70 @@ class ZoneDefinitionPanel(ttk.Frame):
                 self._update_display()
 
     def _on_mouse_drag(self, event):
-        """Handle mouse drag to move a point."""
-        if self._dragging_index is None or self.original_frame is None:
+        """Handle mouse drag to move a point or the entire zone."""
+        if self.original_frame is None:
             return
 
-        # Convert canvas coordinates to original image coordinates
-        x = int((event.x - self._x_offset) / self.scale_factor)
-        y = int((event.y - self._y_offset) / self.scale_factor)
+        if self._dragging_zone and self._drag_start_pos and self._drag_start_points:
+            # Dragging the entire zone
+            # Calculate offset in image coordinates
+            dx = int((event.x - self._drag_start_pos[0]) / self.scale_factor)
+            dy = int((event.y - self._drag_start_pos[1]) / self.scale_factor)
 
-        # Clamp to image bounds
-        h, w = self.original_frame.shape[:2]
-        x = max(0, min(x, w - 1))
-        y = max(0, min(y, h - 1))
+            h, w = self.original_frame.shape[:2]
 
-        # Update the point position
-        self.points[self._dragging_index] = (x, y)
-        self._update_points_display()
-        self._update_display()
+            # Calculate new positions for all points
+            new_points = []
+            for ox, oy in self._drag_start_points:
+                nx = ox + dx
+                ny = oy + dy
+                # Clamp to image bounds
+                nx = max(0, min(nx, w - 1))
+                ny = max(0, min(ny, h - 1))
+                new_points.append((nx, ny))
+
+            self.points = new_points
+            self._update_points_display()
+            self._update_display()
+
+        elif self._dragging_index is not None:
+            # Dragging a single point
+            x = int((event.x - self._x_offset) / self.scale_factor)
+            y = int((event.y - self._y_offset) / self.scale_factor)
+
+            # Clamp to image bounds
+            h, w = self.original_frame.shape[:2]
+            x = max(0, min(x, w - 1))
+            y = max(0, min(y, h - 1))
+
+            # Update the point position
+            self.points[self._dragging_index] = (x, y)
+            self._update_points_display()
+            self._update_display()
 
     def _on_mouse_release(self, event):
         """Handle mouse release to stop dragging."""
-        if self._dragging_index is not None:
+        if self._dragging_index is not None or self._dragging_zone:
             self._dragging_index = None
+            self._dragging_zone = False
             self._drag_start_pos = None
+            self._drag_start_points = None
             self.canvas.configure(cursor="crosshair")
 
     def _on_mouse_move(self, event):
-        """Handle mouse move to update cursor when hovering over points."""
+        """Handle mouse move to update cursor when hovering over points or inside zone."""
         if self.original_frame is None:
+            return
+
+        # Don't change cursor while dragging
+        if self._dragging_index is not None or self._dragging_zone:
             return
 
         hit_index = self._get_point_at_position(event.x, event.y)
         if hit_index is not None:
-            self.canvas.configure(cursor="fleur")  # Move cursor
+            self.canvas.configure(cursor="fleur")  # Move cursor for points
+        elif self._is_inside_polygon(event.x, event.y):
+            self.canvas.configure(cursor="fleur")  # Move cursor for zone
         else:
             self.canvas.configure(cursor="crosshair")
 

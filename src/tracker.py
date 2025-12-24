@@ -41,6 +41,8 @@ class TrackedVehicle:
     special_type: SpecialVehicleType | None = None
     bbox_width_pixels: float = 0.0
     bbox_height_pixels: float = 0.0
+    # Current bounding box for leading corner calculation
+    current_bbox: tuple[float, float, float, float] | None = None
 
     @property
     def current_speed_mph(self) -> float | None:
@@ -56,6 +58,32 @@ class TrackedVehicle:
     def max_speed_mph(self) -> float | None:
         """Get maximum recorded speed."""
         return max(self.speeds_mph) if self.speeds_mph else None
+
+    def get_leading_corner(self) -> tuple[float, float] | None:
+        """Get the leading corner position based on travel direction.
+
+        For side-view footage:
+        - Eastbound (moving right): leading corner is BOTTOM_RIGHT
+        - Westbound (moving left): leading corner is BOTTOM_LEFT
+        - Unknown direction: use BOTTOM_CENTER
+
+        Returns:
+            (x, y) coordinates of the leading corner, or None if no bbox.
+        """
+        if self.current_bbox is None:
+            return None
+
+        x1, y1, x2, y2 = self.current_bbox
+
+        if self.direction == Direction.EASTBOUND:
+            # Moving right - front of car is on the right
+            return (x2, y2)  # Bottom-right
+        elif self.direction == Direction.WESTBOUND:
+            # Moving left - front of car is on the left
+            return (x1, y2)  # Bottom-left
+        else:
+            # Unknown direction - use bottom center
+            return ((x1 + x2) / 2, y2)
 
 
 @dataclass
@@ -193,15 +221,16 @@ class VehicleTracker:
             vehicle.positions_y.append(y)
             vehicle.bbox_width_pixels = bbox_width
             vehicle.bbox_height_pixels = bbox_height
+            vehicle.current_bbox = (bbox[0], bbox[1], bbox[2], bbox[3])
 
             # Store position with frame index for speed calculation
             self.position_history[tracker_id].append((x, frame_index))
 
+            # Determine direction FIRST (needed for speed calc context)
+            self._determine_direction(vehicle)
+
             # Calculate speed if enough history
             self._calculate_speed(vehicle, tracker_id)
-
-            # Determine direction based on movement
-            self._determine_direction(vehicle)
 
             # Check if commercial vehicle
             self._check_commercial_status(vehicle)
@@ -256,20 +285,36 @@ class VehicleTracker:
     def _determine_direction(self, vehicle: TrackedVehicle) -> None:
         """Determine vehicle travel direction based on movement.
 
+        Direction is determined by net horizontal movement:
+        - Moving RIGHT (increasing X) = EASTBOUND
+        - Moving LEFT (decreasing X) = WESTBOUND
+
+        Uses a minimum movement threshold to avoid noise from stationary vehicles.
+
         Args:
             vehicle: The tracked vehicle record.
         """
-        if len(vehicle.positions_x) < 5:
+        # Need at least 3 frames to determine direction
+        if len(vehicle.positions_x) < 3:
             return
 
-        # Compare recent positions to determine direction
-        recent_x = list(vehicle.positions_x)[-5:]
-        movement = recent_x[-1] - recent_x[0]
+        # Use all available positions for more stable direction
+        positions = list(vehicle.positions_x)
+        first_x = positions[0]
+        last_x = positions[-1]
+        net_movement = last_x - first_x
 
-        if movement > 10:  # Moving right (positive X)
+        # Minimum pixel movement to confidently assign direction
+        # Lower threshold = faster direction detection
+        min_movement_pixels = 5
+
+        if net_movement > min_movement_pixels:
+            # Moving right (positive X direction) = EASTBOUND
             vehicle.direction = Direction.EASTBOUND
-        elif movement < -10:  # Moving left (negative X)
+        elif net_movement < -min_movement_pixels:
+            # Moving left (negative X direction) = WESTBOUND
             vehicle.direction = Direction.WESTBOUND
+        # else: keep previous direction or None if movement is too small
 
     def _check_commercial_status(self, vehicle: TrackedVehicle) -> None:
         """Check if vehicle should be classified as commercial.

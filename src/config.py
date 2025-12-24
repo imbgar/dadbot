@@ -37,12 +37,16 @@ class Direction(str, Enum):
     WESTBOUND = "westbound"  # Right to left in frame
 
 
-# COCO class IDs for vehicles (used by RF-DETR)
-COCO_VEHICLE_CLASS_IDS = {
-    2: VehicleClass.CAR,       # car
-    3: VehicleClass.MOTORCYCLE,  # motorcycle
-    5: VehicleClass.BUS,       # bus
-    7: VehicleClass.TRUCK,     # truck
+# Vehicle class names to VehicleClass mapping
+# Using class names instead of IDs for model compatibility
+VEHICLE_CLASS_NAMES = {
+    "car": VehicleClass.CAR,
+    "truck": VehicleClass.TRUCK,
+    "bus": VehicleClass.BUS,
+    "motorcycle": VehicleClass.MOTORCYCLE,
+    # Additional aliases
+    "motorbike": VehicleClass.MOTORCYCLE,
+    "van": VehicleClass.TRUCK,  # Map van to truck
 }
 
 
@@ -95,11 +99,11 @@ class DetectionConfig(BaseSettings):
         str | None, Field(description="Roboflow API key for cloud inference")
     ] = None
 
-    # Model selection - use YOLOv8 with COCO classes
-    # Format: yolov8{n,s,m,l,x}-{resolution} e.g., yolov8n-640, yolov8x-1280
+    # Model selection - RF-DETR (Roboflow's SOTA real-time detector)
+    # Options: rfdetr-base, rfdetr-large, or yolov8{n,s,m,l,x}-{resolution}
     model_id: Annotated[
         str, Field(description="Roboflow model ID")
-    ] = "yolov8n-640"
+    ] = "rfdetr-base"
 
     # Detection thresholds
     confidence_threshold: Annotated[
@@ -162,6 +166,33 @@ class ReportingConfig(BaseSettings):
     ] = "westbound"
 
 
+class ZoneConfig(BaseSettings):
+    """Road zone configuration for filtering detections.
+
+    Defines a polygon representing the road surface. Only vehicles
+    within this zone are tracked and counted.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="DADBOT_ZONE_")
+
+    # Enable zone filtering
+    enabled: Annotated[
+        bool, Field(description="Enable road zone filtering")
+    ] = False
+
+    # Road zone polygon points as list of [x, y] coordinates
+    # Define clockwise or counter-clockwise from any corner
+    # Example: [[100, 300], [1180, 300], [1180, 500], [100, 500]]
+    polygon_points: Annotated[
+        list[list[int]], Field(description="Polygon points defining road zone [[x,y], ...]")
+    ] = []
+
+    # Show zone overlay on video
+    show_zone: Annotated[
+        bool, Field(description="Draw road zone overlay on output")
+    ] = True
+
+
 class VisualizationConfig(BaseSettings):
     """Visualization settings for annotated output."""
 
@@ -200,6 +231,7 @@ class AppConfig(BaseSettings):
     detection: DetectionConfig = DetectionConfig()
     tracking: TrackingConfig = TrackingConfig()
     reporting: ReportingConfig = ReportingConfig()
+    zone: ZoneConfig = ZoneConfig()
     visualization: VisualizationConfig = VisualizationConfig()
 
     @classmethod

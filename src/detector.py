@@ -2,6 +2,7 @@
 
 This module handles vehicle detection using Roboflow's RF-DETR model,
 filtering for vehicle classes only (car, truck, bus, motorcycle).
+Optionally filters to a road zone polygon.
 """
 
 import os
@@ -12,7 +13,7 @@ import numpy as np
 import supervision as sv
 from inference import get_model
 
-from src.config import COCO_VEHICLE_CLASS_IDS, DetectionConfig, VehicleClass
+from src.config import VEHICLE_CLASS_NAMES, DetectionConfig, VehicleClass, ZoneConfig
 
 
 @dataclass
@@ -28,21 +29,30 @@ class VehicleDetector:
     """Detects vehicles in frames using Roboflow RF-DETR model.
 
     This class wraps the Roboflow Inference API to detect vehicles,
-    filtering results to only include relevant vehicle classes from COCO.
+    filtering results to only include relevant vehicle classes.
+    Optionally filters detections to a road zone polygon.
     """
 
-    # COCO class IDs for vehicles
-    VEHICLE_CLASS_IDS = set(COCO_VEHICLE_CLASS_IDS.keys())
+    # Vehicle class names (model-agnostic)
+    VEHICLE_CLASS_NAMES = set(VEHICLE_CLASS_NAMES.keys())
 
-    def __init__(self, config: DetectionConfig | None = None):
+    def __init__(
+        self,
+        config: DetectionConfig | None = None,
+        zone_config: ZoneConfig | None = None,
+    ):
         """Initialize the detector with configuration.
 
         Args:
             config: Detection configuration. Uses defaults if not provided.
+            zone_config: Road zone configuration for spatial filtering.
         """
         self.config = config or DetectionConfig()
+        self.zone_config = zone_config or ZoneConfig()
         self._model = None
+        self._polygon_zone: sv.PolygonZone | None = None
         self._ensure_api_key()
+        self._init_zone()
 
     def _ensure_api_key(self) -> None:
         """Ensure Roboflow API key is available from config or environment."""
@@ -50,6 +60,12 @@ class VehicleDetector:
             api_key = os.environ.get("ROBOFLOW_API_KEY")
             if api_key:
                 self.config.roboflow_api_key = api_key
+
+    def _init_zone(self) -> None:
+        """Initialize polygon zone for road filtering if configured."""
+        if self.zone_config.enabled and self.zone_config.polygon_points:
+            polygon = np.array(self.zone_config.polygon_points, dtype=np.int32)
+            self._polygon_zone = sv.PolygonZone(polygon=polygon)
 
     @property
     def model(self) -> Any:
@@ -93,17 +109,22 @@ class VehicleDetector:
         # Convert to supervision Detections
         detections = sv.Detections.from_inference(results)
 
-        # Filter to vehicle classes only
+        # Filter to vehicle classes only (using class names from inference)
         detections, vehicle_classes = self._filter_vehicles(detections)
 
         # Apply NMS to remove duplicates
         if len(detections) > 0:
             detections = detections.with_nms(threshold=self.config.iou_threshold)
-            # Re-filter vehicle classes after NMS (indices may have changed)
+            # Re-map vehicle classes after NMS using class names
+            class_names = detections.data.get("class_name", [])
             vehicle_classes = [
-                COCO_VEHICLE_CLASS_IDS.get(class_id, VehicleClass.CAR)
-                for class_id in detections.class_id
+                VEHICLE_CLASS_NAMES.get(name.lower(), VehicleClass.CAR)
+                for name in class_names
             ]
+
+        # Apply road zone filtering if configured
+        if len(detections) > 0 and self._polygon_zone is not None:
+            detections, vehicle_classes = self._filter_by_zone(detections, vehicle_classes)
 
         return DetectionResult(
             detections=detections,
@@ -111,10 +132,40 @@ class VehicleDetector:
             frame_index=frame_index,
         )
 
+    def _filter_by_zone(
+        self, detections: sv.Detections, vehicle_classes: list[VehicleClass]
+    ) -> tuple[sv.Detections, list[VehicleClass]]:
+        """Filter detections to only those within the road zone.
+
+        Args:
+            detections: Vehicle detections.
+            vehicle_classes: Corresponding vehicle classes.
+
+        Returns:
+            Tuple of (filtered detections, filtered vehicle classes).
+        """
+        if self._polygon_zone is None or len(detections) == 0:
+            return detections, vehicle_classes
+
+        # Get mask of detections inside the zone
+        zone_mask = self._polygon_zone.trigger(detections)
+
+        # Filter detections
+        filtered_detections = detections[zone_mask]
+
+        # Filter vehicle classes
+        filtered_classes = [
+            vc for vc, in_zone in zip(vehicle_classes, zone_mask) if in_zone
+        ]
+
+        return filtered_detections, filtered_classes
+
     def _filter_vehicles(
         self, detections: sv.Detections
     ) -> tuple[sv.Detections, list[VehicleClass]]:
         """Filter detections to only include vehicle classes.
+
+        Uses class names from inference results for model-agnostic filtering.
 
         Args:
             detections: Raw detections from the model.
@@ -125,33 +176,27 @@ class VehicleDetector:
         if len(detections) == 0:
             return detections, []
 
-        # Create mask for vehicle classes
+        # Get class names from detections data
+        class_names = detections.data.get("class_name", [])
+        if len(class_names) == 0:
+            return detections, []
+
+        # Create mask for vehicle classes based on class names
         vehicle_mask = np.array([
-            class_id in self.VEHICLE_CLASS_IDS
-            for class_id in detections.class_id
+            name.lower() in self.VEHICLE_CLASS_NAMES
+            for name in class_names
         ])
 
         # Filter detections
         filtered = detections[vehicle_mask]
 
-        # Map class IDs to VehicleClass enum
+        # Get filtered class names
+        filtered_names = [name for name, is_vehicle in zip(class_names, vehicle_mask) if is_vehicle]
+
+        # Map class names to VehicleClass enum
         vehicle_classes = [
-            COCO_VEHICLE_CLASS_IDS.get(class_id, VehicleClass.CAR)
-            for class_id in filtered.class_id
+            VEHICLE_CLASS_NAMES.get(name.lower(), VehicleClass.CAR)
+            for name in filtered_names
         ]
 
         return filtered, vehicle_classes
-
-    def get_class_name(self, class_id: int) -> str:
-        """Get human-readable class name from COCO class ID.
-
-        Args:
-            class_id: COCO class ID.
-
-        Returns:
-            Human-readable class name.
-        """
-        vehicle_class = COCO_VEHICLE_CLASS_IDS.get(class_id)
-        if vehicle_class:
-            return vehicle_class.value
-        return f"unknown_{class_id}"

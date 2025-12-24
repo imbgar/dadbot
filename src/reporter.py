@@ -51,6 +51,7 @@ class AggregationWindow:
     special_vehicles: list[SpecialVehicleSighting] = field(default_factory=list)
     commercial_trucks: int = 0
     _seen_tracker_ids: set[int] = field(default_factory=set)
+    _direction_assigned_ids: set[int] = field(default_factory=set)
 
     @property
     def top_speed_mph(self) -> float:
@@ -159,11 +160,23 @@ class TrafficReporter:
 
         window = self.current_window
 
-        # Skip if we've already counted this vehicle in this window
-        if vehicle.tracker_id in window._seen_tracker_ids:
-            # But still update speed if new measurement
+        # Check if we've already counted this vehicle in this window
+        already_seen = vehicle.tracker_id in window._seen_tracker_ids
+
+        if already_seen:
+            # Still update speed if new measurement
             if vehicle.current_speed_mph:
                 window.speeds_mph.append(vehicle.current_speed_mph)
+
+            # Check if direction was assigned after initial recording
+            # Direction may be determined after a few frames of movement
+            if (vehicle.direction and
+                vehicle.tracker_id not in window._direction_assigned_ids):
+                direction_key = vehicle.direction.value
+                window.vehicles_by_direction[direction_key] = (
+                    window.vehicles_by_direction.get(direction_key, 0) + 1
+                )
+                window._direction_assigned_ids.add(vehicle.tracker_id)
             return
 
         # Mark as seen
@@ -172,12 +185,13 @@ class TrafficReporter:
         # Count total
         window.total_vehicles += 1
 
-        # Count by direction
+        # Count by direction (if known at first sighting)
         if vehicle.direction:
             direction_key = vehicle.direction.value
             window.vehicles_by_direction[direction_key] = (
                 window.vehicles_by_direction.get(direction_key, 0) + 1
             )
+            window._direction_assigned_ids.add(vehicle.tracker_id)
 
         # Count by type
         type_key = vehicle.vehicle_class.value

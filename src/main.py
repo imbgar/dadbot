@@ -27,6 +27,7 @@ from src.config import (
     ReportingConfig,
     TrackingConfig,
     VisualizationConfig,
+    ZoneConfig,
 )
 from src.detector import VehicleDetector
 from src.reporter import TrafficReporter
@@ -59,8 +60,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--model-id",
         type=str,
-        default="yolov8n-640",
-        help="Roboflow model ID (e.g., yolov8n-640, yolov8x-1280)",
+        default="rfdetr-base",
+        help="Roboflow model ID (e.g., rfdetr-base, yolov8n-640)",
     )
     parser.add_argument(
         "--confidence",
@@ -122,6 +123,19 @@ def parse_arguments() -> argparse.Namespace:
         help="Aggregation window in seconds",
     )
 
+    # Road zone filtering
+    parser.add_argument(
+        "--zone",
+        type=str,
+        default=None,
+        help="Road zone polygon as JSON: '[[x1,y1],[x2,y2],[x3,y3],[x4,y4]]'",
+    )
+    parser.add_argument(
+        "--show-zone",
+        action="store_true",
+        help="Show road zone overlay on output",
+    )
+
     return parser.parse_args()
 
 
@@ -134,6 +148,8 @@ def build_config(args: argparse.Namespace) -> AppConfig:
     Returns:
         Complete application configuration.
     """
+    import json
+
     # Get API key from environment
     api_key = os.environ.get("ROBOFLOW_API_KEY")
 
@@ -158,6 +174,22 @@ def build_config(args: argparse.Namespace) -> AppConfig:
         aggregation_window_seconds=args.aggregation_window,
     )
 
+    # Parse zone polygon if provided
+    zone_enabled = args.zone is not None
+    zone_points = []
+    if args.zone:
+        try:
+            zone_points = json.loads(args.zone)
+        except json.JSONDecodeError:
+            print(f"Warning: Invalid zone JSON, ignoring: {args.zone}")
+            zone_enabled = False
+
+    zone = ZoneConfig(
+        enabled=zone_enabled,
+        polygon_points=zone_points,
+        show_zone=args.show_zone,
+    )
+
     visualization = VisualizationConfig(
         show_preview=not args.no_preview,
         save_video=not args.no_save_video,
@@ -169,6 +201,7 @@ def build_config(args: argparse.Namespace) -> AppConfig:
         detection=detection,
         tracking=tracking,
         reporting=reporting,
+        zone=zone,
         visualization=visualization,
     )
 
@@ -193,9 +226,15 @@ def run_pipeline(source_path: str, config: AppConfig) -> None:
     print(f"  Pixel range: {config.calibration.reference_pixel_start_x} - {config.calibration.reference_pixel_end_x}")
     print(f"  Pixels per foot: {config.calibration.pixels_per_foot:.2f}")
 
+    # Zone filtering info
+    if config.zone.enabled:
+        print(f"\nRoad Zone: Enabled ({len(config.zone.polygon_points)} points)")
+    else:
+        print(f"\nRoad Zone: Disabled (all detections included)")
+
     # Initialize components
     print("\nInitializing components...")
-    detector = VehicleDetector(config.detection)
+    detector = VehicleDetector(config.detection, zone_config=config.zone)
     tracker = VehicleTracker(
         calibration_config=config.calibration,
         tracking_config=config.tracking,
@@ -210,6 +249,7 @@ def run_pipeline(source_path: str, config: AppConfig) -> None:
         vis_config=config.visualization,
         calibration_config=config.calibration,
         tracking_config=config.tracking,
+        zone_config=config.zone,
     )
 
     # Start reporting session

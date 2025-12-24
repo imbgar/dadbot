@@ -39,6 +39,15 @@ class ZoneDefinitionPanel(ttk.Frame):
         self.points: list[tuple[int, int]] = []
         self.scale_factor = 1.0
 
+        # Drag state
+        self._dragging_index: int | None = None
+        self._drag_start_pos: tuple[int, int] | None = None
+        self._point_hit_radius = 15  # Pixels to detect point click
+
+        # Canvas offsets (set during display)
+        self._x_offset = 0
+        self._y_offset = 0
+
         # Load existing points from settings
         if settings.zone.polygon_points:
             self.points = [tuple(p) for p in settings.zone.polygon_points]
@@ -68,7 +77,7 @@ class ZoneDefinitionPanel(ttk.Frame):
         # Instructions above canvas
         instructions = tk.Label(
             canvas_frame,
-            text="Click to add points • Right-click to remove last point • Draw clockwise around the road",
+            text="Click to add points • Drag points to move • Right-click to remove last point",
             font=FONTS["small"],
             fg=COLORS["text_secondary"],
             bg=COLORS["bg_medium"],
@@ -96,7 +105,10 @@ class ZoneDefinitionPanel(ttk.Frame):
 
         # Bind mouse events
         self.canvas.bind("<Button-1>", self._on_left_click)
+        self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_mouse_release)
         self.canvas.bind("<Button-3>", self._on_right_click)
+        self.canvas.bind("<Motion>", self._on_mouse_move)
         self.canvas.bind("<Configure>", self._on_canvas_resize)
 
         # Right side - Controls
@@ -349,21 +361,80 @@ class ZoneDefinitionPanel(ttk.Frame):
 
         return frame
 
+    def _get_point_at_position(self, canvas_x: int, canvas_y: int) -> int | None:
+        """Check if canvas position is near a point. Returns point index or None."""
+        for i, (px, py) in enumerate(self.points):
+            # Convert point to canvas coordinates
+            screen_x = px * self.scale_factor + self._x_offset
+            screen_y = py * self.scale_factor + self._y_offset
+
+            # Check distance
+            dist = ((canvas_x - screen_x) ** 2 + (canvas_y - screen_y) ** 2) ** 0.5
+            if dist <= self._point_hit_radius:
+                return i
+        return None
+
     def _on_left_click(self, event):
-        """Handle left mouse click to add a point."""
+        """Handle left mouse click to add or start dragging a point."""
         if self.original_frame is None:
+            return
+
+        # Check if clicking on an existing point
+        hit_index = self._get_point_at_position(event.x, event.y)
+
+        if hit_index is not None:
+            # Start dragging this point
+            self._dragging_index = hit_index
+            self._drag_start_pos = (event.x, event.y)
+            self.canvas.configure(cursor="fleur")  # Move cursor
+        else:
+            # Add a new point
+            x = int((event.x - self._x_offset) / self.scale_factor)
+            y = int((event.y - self._y_offset) / self.scale_factor)
+
+            # Check bounds
+            h, w = self.original_frame.shape[:2]
+            if 0 <= x < w and 0 <= y < h:
+                self.points.append((x, y))
+                self._update_points_display()
+                self._update_display()
+
+    def _on_mouse_drag(self, event):
+        """Handle mouse drag to move a point."""
+        if self._dragging_index is None or self.original_frame is None:
             return
 
         # Convert canvas coordinates to original image coordinates
         x = int((event.x - self._x_offset) / self.scale_factor)
         y = int((event.y - self._y_offset) / self.scale_factor)
 
-        # Check bounds
+        # Clamp to image bounds
         h, w = self.original_frame.shape[:2]
-        if 0 <= x < w and 0 <= y < h:
-            self.points.append((x, y))
-            self._update_points_display()
-            self._update_display()
+        x = max(0, min(x, w - 1))
+        y = max(0, min(y, h - 1))
+
+        # Update the point position
+        self.points[self._dragging_index] = (x, y)
+        self._update_points_display()
+        self._update_display()
+
+    def _on_mouse_release(self, event):
+        """Handle mouse release to stop dragging."""
+        if self._dragging_index is not None:
+            self._dragging_index = None
+            self._drag_start_pos = None
+            self.canvas.configure(cursor="crosshair")
+
+    def _on_mouse_move(self, event):
+        """Handle mouse move to update cursor when hovering over points."""
+        if self.original_frame is None:
+            return
+
+        hit_index = self._get_point_at_position(event.x, event.y)
+        if hit_index is not None:
+            self.canvas.configure(cursor="fleur")  # Move cursor
+        else:
+            self.canvas.configure(cursor="crosshair")
 
     def _on_right_click(self, event):
         """Handle right mouse click to remove last point."""

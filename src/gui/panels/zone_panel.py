@@ -1,9 +1,9 @@
 """Zone Definition Panel for DadBot Traffic Monitor."""
 
-import json
+from datetime import datetime
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable
 
 import cv2
@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from src.gui.styles import COLORS, FONTS
-from src.settings import AppSettings
+from src.settings import AppSettings, SavedZone
 from src.utils import extract_first_frame, get_video_info
 
 
@@ -39,6 +39,11 @@ class ZoneDefinitionPanel(ttk.Frame):
         self.points: list[tuple[int, int]] = []
         self.scale_factor = 1.0
 
+        # Undo/Redo stacks (max 50 steps)
+        self._undo_stack: list[list[tuple[int, int]]] = []
+        self._redo_stack: list[list[tuple[int, int]]] = []
+        self._max_undo_steps = 50
+
         # Drag state
         self._dragging_index: int | None = None
         self._dragging_zone = False  # True when dragging entire zone
@@ -55,6 +60,14 @@ class ZoneDefinitionPanel(ttk.Frame):
             self.points = [tuple(p) for p in settings.zone.polygon_points]
 
         self._create_layout()
+
+        # Bind keyboard shortcuts
+        self.bind_all("<Control-z>", self._on_undo_key)
+        self.bind_all("<Control-Z>", self._on_undo_key)
+        self.bind_all("<Control-y>", self._on_redo_key)
+        self.bind_all("<Control-Y>", self._on_redo_key)
+        self.bind_all("<Control-Shift-z>", self._on_redo_key)
+        self.bind_all("<Control-Shift-Z>", self._on_redo_key)
 
     def _create_layout(self):
         """Create the panel layout."""
@@ -180,29 +193,58 @@ class ZoneDefinitionPanel(ttk.Frame):
         )
         self.points_listbox.pack(fill="x")
 
-        ttk.Separator(controls_inner, orient="horizontal").pack(fill="x", pady=15)
+        ttk.Separator(controls_inner, orient="horizontal").pack(fill="x", pady=10)
 
-        # Action buttons
-        ttk.Label(
-            controls_inner,
-            text="Actions",
-            style="Subheading.TLabel",
-        ).pack(anchor="w", pady=(0, 10))
+        # Undo/Redo buttons
+        undo_redo_frame = ttk.Frame(controls_inner, style="CardInner.TFrame")
+        undo_redo_frame.pack(fill="x", pady=5)
+
+        self.undo_btn = ttk.Button(
+            undo_redo_frame,
+            text="↶ Undo",
+            command=self._undo,
+            width=8,
+        )
+        self.undo_btn.pack(side="left", fill="x", expand=True, padx=(0, 2))
+
+        self.redo_btn = ttk.Button(
+            undo_redo_frame,
+            text="↷ Redo",
+            command=self._redo,
+            width=8,
+        )
+        self.redo_btn.pack(side="left", fill="x", expand=True, padx=(2, 0))
 
         clear_btn = ttk.Button(
             controls_inner,
-            text="🗑️ Clear All Points",
+            text="🗑️ Clear All",
             command=self._clear_points,
         )
         clear_btn.pack(fill="x", pady=3)
 
+        ttk.Separator(controls_inner, orient="horizontal").pack(fill="x", pady=10)
+
+        # Save section
+        ttk.Label(
+            controls_inner,
+            text="Save Zone",
+            style="Subheading.TLabel",
+        ).pack(anchor="w", pady=(0, 5))
+
         save_btn = ttk.Button(
             controls_inner,
-            text="💾 Save Zone",
+            text="💾 Apply to Settings",
             command=self._save_zone,
             style="Accent.TButton",
         )
-        save_btn.pack(fill="x", pady=10)
+        save_btn.pack(fill="x", pady=3)
+
+        save_named_btn = ttk.Button(
+            controls_inner,
+            text="📝 Save As...",
+            command=self._save_zone_as,
+        )
+        save_named_btn.pack(fill="x", pady=3)
 
         # Zone enabled checkbox
         self.zone_enabled_var = tk.BooleanVar(value=self.settings.zone.enabled)
@@ -224,10 +266,85 @@ class ZoneDefinitionPanel(ttk.Frame):
             command=self._on_overlay_toggle,
             style="Modern.TCheckbutton",
         )
-        overlay_cb.pack(anchor="w", pady=5)
+        overlay_cb.pack(anchor="w", pady=3)
 
-        # Update points display
+        ttk.Separator(controls_inner, orient="horizontal").pack(fill="x", pady=10)
+
+        # Saved zones section
+        ttk.Label(
+            controls_inner,
+            text="Saved Zones",
+            style="Subheading.TLabel",
+        ).pack(anchor="w", pady=(0, 5))
+
+        self.saved_zones_listbox = tk.Listbox(
+            controls_inner,
+            height=4,
+            font=FONTS["small"],
+            bg=COLORS["bg_dark"],
+            fg=COLORS["text_primary"],
+            selectbackground=COLORS["accent"],
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+        )
+        self.saved_zones_listbox.pack(fill="x", pady=3)
+        self.saved_zones_listbox.bind("<Double-Button-1>", self._load_saved_zone)
+
+        saved_btns = ttk.Frame(controls_inner, style="CardInner.TFrame")
+        saved_btns.pack(fill="x", pady=3)
+
+        load_saved_btn = ttk.Button(
+            saved_btns,
+            text="Load",
+            command=self._load_saved_zone,
+            width=6,
+        )
+        load_saved_btn.pack(side="left", fill="x", expand=True, padx=(0, 2))
+
+        delete_saved_btn = ttk.Button(
+            saved_btns,
+            text="Delete",
+            command=self._delete_saved_zone,
+            width=6,
+        )
+        delete_saved_btn.pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+        ttk.Separator(controls_inner, orient="horizontal").pack(fill="x", pady=10)
+
+        # History section
+        ttk.Label(
+            controls_inner,
+            text="Save History",
+            style="Subheading.TLabel",
+        ).pack(anchor="w", pady=(0, 5))
+
+        self.history_listbox = tk.Listbox(
+            controls_inner,
+            height=4,
+            font=FONTS["small"],
+            bg=COLORS["bg_dark"],
+            fg=COLORS["text_primary"],
+            selectbackground=COLORS["accent"],
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+        )
+        self.history_listbox.pack(fill="x", pady=3)
+        self.history_listbox.bind("<Double-Button-1>", self._load_from_history)
+
+        load_history_btn = ttk.Button(
+            controls_inner,
+            text="Restore Selected",
+            command=self._load_from_history,
+        )
+        load_history_btn.pack(fill="x", pady=3)
+
+        # Update displays
         self._update_points_display()
+        self._update_saved_zones_list()
+        self._update_history_list()
+        self._update_undo_redo_buttons()
 
     def _load_video(self):
         """Load a video file and extract first frame."""
@@ -410,12 +527,14 @@ class ZoneDefinitionPanel(ttk.Frame):
 
         if hit_index is not None:
             # Start dragging this point
+            self._push_undo_state()
             self._dragging_index = hit_index
             self._dragging_zone = False
             self._drag_start_pos = (event.x, event.y)
             self.canvas.configure(cursor="fleur")  # Move cursor
         elif self._is_inside_polygon(event.x, event.y):
             # Start dragging the entire zone
+            self._push_undo_state()
             self._dragging_zone = True
             self._dragging_index = None
             self._drag_start_pos = (event.x, event.y)
@@ -429,6 +548,7 @@ class ZoneDefinitionPanel(ttk.Frame):
             # Check bounds
             h, w = self.original_frame.shape[:2]
             if 0 <= x < w and 0 <= y < h:
+                self._push_undo_state()
                 self.points.append((x, y))
                 self._update_points_display()
                 self._update_display()
@@ -504,6 +624,7 @@ class ZoneDefinitionPanel(ttk.Frame):
     def _on_right_click(self, event):
         """Handle right mouse click to remove last point."""
         if self.points:
+            self._push_undo_state()
             self.points.pop()
             self._update_points_display()
             self._update_display()
@@ -523,13 +644,14 @@ class ZoneDefinitionPanel(ttk.Frame):
 
     def _clear_points(self):
         """Clear all zone points."""
-        if messagebox.askyesno("Confirm", "Clear all zone points?"):
+        if self.points and messagebox.askyesno("Confirm", "Clear all zone points?"):
+            self._push_undo_state()
             self.points = []
             self._update_points_display()
             self._update_display()
 
     def _save_zone(self):
-        """Save the zone configuration."""
+        """Save the zone configuration to settings and add to history."""
         if len(self.points) < 3:
             messagebox.showwarning("Warning", "Zone requires at least 3 points")
             return
@@ -539,9 +661,13 @@ class ZoneDefinitionPanel(ttk.Frame):
         self.settings.zone.enabled = self.zone_enabled_var.get()
         self.settings.zone.show_overlay = self.show_overlay_var.get()
 
-        self.on_change()
+        # Add to history
+        self._add_to_history("Auto-save")
 
-        messagebox.showinfo("Success", f"Zone saved with {len(self.points)} points")
+        self.on_change()
+        self._update_history_list()
+
+        messagebox.showinfo("Success", f"Zone applied with {len(self.points)} points")
 
     def _on_zone_toggle(self):
         """Handle zone enabled checkbox toggle."""
@@ -552,3 +678,228 @@ class ZoneDefinitionPanel(ttk.Frame):
         """Handle overlay checkbox toggle."""
         self.settings.zone.show_overlay = self.show_overlay_var.get()
         self.on_change()
+
+    # ==================== Undo/Redo Methods ====================
+
+    def _push_undo_state(self):
+        """Push current state to undo stack."""
+        # Save current points
+        self._undo_stack.append(list(self.points))
+
+        # Limit stack size
+        if len(self._undo_stack) > self._max_undo_steps:
+            self._undo_stack.pop(0)
+
+        # Clear redo stack when new action is performed
+        self._redo_stack.clear()
+
+        self._update_undo_redo_buttons()
+
+    def _undo(self):
+        """Undo the last action."""
+        if not self._undo_stack:
+            return
+
+        # Push current state to redo stack
+        self._redo_stack.append(list(self.points))
+
+        # Pop and restore previous state
+        self.points = self._undo_stack.pop()
+
+        self._update_points_display()
+        self._update_display()
+        self._update_undo_redo_buttons()
+
+    def _redo(self):
+        """Redo the last undone action."""
+        if not self._redo_stack:
+            return
+
+        # Push current state to undo stack
+        self._undo_stack.append(list(self.points))
+
+        # Pop and restore redo state
+        self.points = self._redo_stack.pop()
+
+        self._update_points_display()
+        self._update_display()
+        self._update_undo_redo_buttons()
+
+    def _on_undo_key(self, event):
+        """Handle Ctrl+Z keyboard shortcut."""
+        self._undo()
+        return "break"
+
+    def _on_redo_key(self, event):
+        """Handle Ctrl+Y or Ctrl+Shift+Z keyboard shortcut."""
+        self._redo()
+        return "break"
+
+    def _update_undo_redo_buttons(self):
+        """Update the enabled state of undo/redo buttons."""
+        if hasattr(self, 'undo_btn'):
+            if self._undo_stack:
+                self.undo_btn.configure(state="normal")
+            else:
+                self.undo_btn.configure(state="disabled")
+
+        if hasattr(self, 'redo_btn'):
+            if self._redo_stack:
+                self.redo_btn.configure(state="normal")
+            else:
+                self.redo_btn.configure(state="disabled")
+
+    # ==================== Save/Load Named Zones ====================
+
+    def _save_zone_as(self):
+        """Save the zone with a custom name."""
+        if len(self.points) < 3:
+            messagebox.showwarning("Warning", "Zone requires at least 3 points")
+            return
+
+        name = simpledialog.askstring(
+            "Save Zone",
+            "Enter a name for this zone:",
+            parent=self,
+        )
+
+        if not name:
+            return
+
+        name = name.strip()
+        if not name:
+            return
+
+        # Check if name already exists
+        existing_names = [z.name for z in self.settings.zone.saved_zones]
+        if name in existing_names:
+            if not messagebox.askyesno("Overwrite", f"Zone '{name}' already exists. Overwrite?"):
+                return
+            # Remove existing
+            self.settings.zone.saved_zones = [
+                z for z in self.settings.zone.saved_zones if z.name != name
+            ]
+
+        # Create new saved zone
+        saved_zone = SavedZone(
+            name=name,
+            points=[list(p) for p in self.points],
+            saved_at=datetime.now().isoformat(),
+        )
+
+        # Add to saved zones
+        self.settings.zone.saved_zones.append(saved_zone)
+
+        # Also apply to current settings
+        self.settings.zone.polygon_points = [list(p) for p in self.points]
+
+        # Add to history
+        self._add_to_history(name)
+
+        self.on_change()
+        self._update_saved_zones_list()
+        self._update_history_list()
+
+        messagebox.showinfo("Success", f"Zone saved as '{name}'")
+
+    def _update_saved_zones_list(self):
+        """Update the saved zones listbox."""
+        if not hasattr(self, 'saved_zones_listbox'):
+            return
+
+        self.saved_zones_listbox.delete(0, tk.END)
+        for zone in self.settings.zone.saved_zones:
+            self.saved_zones_listbox.insert(tk.END, f"  {zone.name}")
+
+    def _load_saved_zone(self, event=None):
+        """Load a saved zone."""
+        selection = self.saved_zones_listbox.curselection()
+        if not selection:
+            return
+
+        idx = selection[0]
+        if idx >= len(self.settings.zone.saved_zones):
+            return
+
+        zone = self.settings.zone.saved_zones[idx]
+
+        # Push current state to undo
+        self._push_undo_state()
+
+        # Load the zone
+        self.points = [tuple(p) for p in zone.points]
+
+        self._update_points_display()
+        self._update_display()
+
+    def _delete_saved_zone(self):
+        """Delete a saved zone."""
+        selection = self.saved_zones_listbox.curselection()
+        if not selection:
+            return
+
+        idx = selection[0]
+        if idx >= len(self.settings.zone.saved_zones):
+            return
+
+        zone = self.settings.zone.saved_zones[idx]
+
+        if messagebox.askyesno("Confirm", f"Delete saved zone '{zone.name}'?"):
+            self.settings.zone.saved_zones.pop(idx)
+            self.on_change()
+            self._update_saved_zones_list()
+
+    # ==================== History Methods ====================
+
+    def _add_to_history(self, name: str):
+        """Add current zone to save history."""
+        saved_zone = SavedZone(
+            name=name,
+            points=[list(p) for p in self.points],
+            saved_at=datetime.now().isoformat(),
+        )
+
+        # Insert at beginning (most recent first)
+        self.settings.zone.save_history.insert(0, saved_zone)
+
+        # Limit history size
+        max_history = self.settings.zone.max_history
+        if len(self.settings.zone.save_history) > max_history:
+            self.settings.zone.save_history = self.settings.zone.save_history[:max_history]
+
+    def _update_history_list(self):
+        """Update the history listbox."""
+        if not hasattr(self, 'history_listbox'):
+            return
+
+        self.history_listbox.delete(0, tk.END)
+        for zone in self.settings.zone.save_history:
+            # Format timestamp
+            try:
+                dt = datetime.fromisoformat(zone.saved_at)
+                time_str = dt.strftime("%m/%d %H:%M")
+            except Exception:
+                time_str = "Unknown"
+
+            self.history_listbox.insert(tk.END, f"  {time_str} - {zone.name}")
+
+    def _load_from_history(self, event=None):
+        """Load a zone from history."""
+        selection = self.history_listbox.curselection()
+        if not selection:
+            return
+
+        idx = selection[0]
+        if idx >= len(self.settings.zone.save_history):
+            return
+
+        zone = self.settings.zone.save_history[idx]
+
+        # Push current state to undo
+        self._push_undo_state()
+
+        # Load the zone
+        self.points = [tuple(p) for p in zone.points]
+
+        self._update_points_display()
+        self._update_display()

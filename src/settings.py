@@ -32,6 +32,14 @@ class LabelDisplayMode(str, Enum):
     NONE = "none"  # No labels
 
 
+class SavedZone(BaseModel):
+    """A saved zone configuration."""
+
+    name: str
+    points: list[list[int]]
+    saved_at: str  # ISO format timestamp
+
+
 class ZoneSettings(BaseModel):
     """Road zone filtering settings."""
 
@@ -42,6 +50,12 @@ class ZoneSettings(BaseModel):
     show_overlay: bool = True
     overlay_color: list[int] = [0, 255, 255]  # BGR Yellow
     overlay_opacity: float = 0.2
+
+    # Named saved zones
+    saved_zones: list[SavedZone] = Field(default_factory=list)
+    # History of saved states (most recent first)
+    save_history: list[SavedZone] = Field(default_factory=list)
+    max_history: int = 20
 
 
 class CalibrationSettings(BaseModel):

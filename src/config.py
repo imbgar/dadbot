@@ -178,14 +178,14 @@ class ZoneConfig(BaseSettings):
     # Enable zone filtering
     enabled: Annotated[
         bool, Field(description="Enable road zone filtering")
-    ] = False
+    ] = True
 
     # Road zone polygon points as list of [x, y] coordinates
     # Define clockwise or counter-clockwise from any corner
-    # Example: [[100, 300], [1180, 300], [1180, 500], [100, 500]]
+    # Default: calibrated road zone for reference camera position
     polygon_points: Annotated[
         list[list[int]], Field(description="Polygon points defining road zone [[x,y], ...]")
-    ] = []
+    ] = [[3, 287], [1078, 412], [1081, 554], [4, 411]]
 
     # Show zone overlay on video
     show_zone: Annotated[

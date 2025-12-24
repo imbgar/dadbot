@@ -128,7 +128,12 @@ def parse_arguments() -> argparse.Namespace:
         "--zone",
         type=str,
         default=None,
-        help="Road zone polygon as JSON: '[[x1,y1],[x2,y2],[x3,y3],[x4,y4]]'",
+        help="Road zone polygon as JSON: '[[x1,y1],[x2,y2],[x3,y3],[x4,y4]]'. Uses default if not specified.",
+    )
+    parser.add_argument(
+        "--no-zone",
+        action="store_true",
+        help="Disable road zone filtering (include all detections)",
     )
     parser.add_argument(
         "--show-zone",
@@ -174,21 +179,25 @@ def build_config(args: argparse.Namespace) -> AppConfig:
         aggregation_window_seconds=args.aggregation_window,
     )
 
-    # Parse zone polygon if provided
-    zone_enabled = args.zone is not None
-    zone_points = []
-    if args.zone:
+    # Zone configuration: use defaults unless overridden
+    if args.no_zone:
+        # Explicitly disabled
+        zone = ZoneConfig(enabled=False, polygon_points=[], show_zone=False)
+    elif args.zone:
+        # Custom zone provided
         try:
             zone_points = json.loads(args.zone)
+            zone = ZoneConfig(
+                enabled=True,
+                polygon_points=zone_points,
+                show_zone=args.show_zone,
+            )
         except json.JSONDecodeError:
-            print(f"Warning: Invalid zone JSON, ignoring: {args.zone}")
-            zone_enabled = False
-
-    zone = ZoneConfig(
-        enabled=zone_enabled,
-        polygon_points=zone_points,
-        show_zone=args.show_zone,
-    )
+            print(f"Warning: Invalid zone JSON, using default zone: {args.zone}")
+            zone = ZoneConfig(show_zone=args.show_zone)
+    else:
+        # Use default zone from config
+        zone = ZoneConfig(show_zone=args.show_zone)
 
     visualization = VisualizationConfig(
         show_preview=not args.no_preview,

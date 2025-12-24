@@ -75,11 +75,11 @@ class DadBotApp:
         logo_frame = ttk.Frame(sidebar, style="Card.TFrame")
         logo_frame.pack(fill="x", padx=5, pady=10)
 
-        # Create canvas for logo
+        # Create canvas for logo (800x500 aspect ratio)
         self.logo_canvas = tk.Canvas(
             logo_frame,
             width=290,
-            height=180,
+            height=181,
             bg=COLORS["bg_medium"],
             highlightthickness=0,
         )
@@ -324,22 +324,66 @@ class DadBotApp:
 
     def _load_logo(self):
         """Load and display the logo image."""
-        # Try PNG or GIF
         png_path = ASSETS_DIR / "dadbot-logo.png"
         gif_path = ASSETS_DIR / "dadbot-logo.gif"
 
-        logo_path = gif_path if gif_path.exists() else png_path
-
-        if logo_path.exists():
+        # Try animated GIF first
+        if gif_path.exists():
             try:
-                img = Image.open(logo_path)
-                img = img.resize((280, 175), Image.Resampling.LANCZOS)
-                self._logo_image = ImageTk.PhotoImage(img)
-                self.logo_canvas.create_image(145, 90, image=self._logo_image)
+                self._load_animated_gif(gif_path)
+                return
             except Exception:
-                self._draw_fallback_logo()
-        else:
-            self._draw_fallback_logo()
+                pass
+
+        # Fall back to static PNG
+        if png_path.exists():
+            try:
+                img = Image.open(png_path)
+                img = img.resize((290, 181), Image.Resampling.LANCZOS)
+                self._logo_image = ImageTk.PhotoImage(img)
+                self.logo_canvas.create_image(145, 91, image=self._logo_image)
+                return
+            except Exception:
+                pass
+
+        self._draw_fallback_logo()
+
+    def _load_animated_gif(self, gif_path):
+        """Load and animate a GIF image."""
+        self._gif_frames = []
+        self._gif_index = 0
+
+        img = Image.open(gif_path)
+
+        # Extract all frames
+        try:
+            while True:
+                frame = img.copy()
+                frame = frame.resize((290, 181), Image.Resampling.LANCZOS)
+                self._gif_frames.append(ImageTk.PhotoImage(frame))
+                img.seek(img.tell() + 1)
+        except EOFError:
+            pass
+
+        if not self._gif_frames:
+            raise ValueError("No frames in GIF")
+
+        # Get frame delay (default 100ms if not specified)
+        try:
+            self._gif_delay = img.info.get("duration", 100)
+        except Exception:
+            self._gif_delay = 100
+
+        # Display first frame and start animation
+        self._logo_image_id = self.logo_canvas.create_image(145, 91, image=self._gif_frames[0])
+        self._animate_gif()
+
+    def _animate_gif(self):
+        """Cycle through GIF frames."""
+        if hasattr(self, "_gif_frames") and self._gif_frames:
+            self._gif_index = (self._gif_index + 1) % len(self._gif_frames)
+            self.logo_canvas.itemconfig(self._logo_image_id, image=self._gif_frames[self._gif_index])
+            self.root.after(self._gif_delay, self._animate_gif)
 
     def _draw_fallback_logo(self):
         """Draw a simple text logo as fallback."""

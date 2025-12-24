@@ -1,0 +1,316 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500">
+  <defs>
+    <!-- Gradient for the road -->
+    <linearGradient id="roadGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#2a2a2a"/>
+      <stop offset="100%" style="stop-color:#1a1a1a"/>
+    </linearGradient>
+    
+    <!-- Tire smoke gradient -->
+    <radialGradient id="smokeGradient" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#888888;stop-opacity:0.8"/>
+      <stop offset="100%" style="stop-color:#444444;stop-opacity:0"/>
+    </radialGradient>
+    
+    <!-- Car body gradient - electric blue -->
+    <linearGradient id="carGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00d4ff"/>
+      <stop offset="50%" style="stop-color:#0099cc"/>
+      <stop offset="100%" style="stop-color:#006699"/>
+    </linearGradient>
+    
+    <!-- Background gradient -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f23"/>
+      <stop offset="100%" style="stop-color:#1a1a2e"/>
+    </linearGradient>
+    
+    <!-- Glow filter for the car -->
+    <filter id="carGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Anger lines filter -->
+    <filter id="angerGlow">
+      <feGaussianBlur stdDeviation="1" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="800" height="500" fill="url(#bgGradient)"/>
+  
+  <!-- Subtle grid pattern -->
+  <g opacity="0.1">
+    <line x1="0" y1="350" x2="800" y2="350" stroke="#00d4ff" stroke-width="0.5"/>
+    <line x1="0" y1="360" x2="800" y2="360" stroke="#00d4ff" stroke-width="0.3"/>
+  </g>
+  
+  <!-- Road -->
+  <path d="M0 340 L800 340 L800 400 L0 400 Z" fill="url(#roadGradient)"/>
+  
+  <!-- Road markings -->
+  <g fill="#ffcc00" opacity="0.8">
+    <rect x="50" y="365" width="60" height="8" rx="2"/>
+    <rect x="150" y="365" width="60" height="8" rx="2"/>
+    <rect x="250" y="365" width="60" height="8" rx="2"/>
+  </g>
+  
+  <!-- Tire burn marks -->
+  <g>
+    <path d="M480 385 Q500 387 520 383 Q540 386 560 382 Q580 385 600 380" 
+          stroke="#111" stroke-width="12" fill="none" opacity="0.7"/>
+    <path d="M500 395 Q520 393 540 397 Q560 394 580 398 Q600 395 620 392" 
+          stroke="#111" stroke-width="10" fill="none" opacity="0.6"/>
+  </g>
+  
+  <!-- Tire smoke clouds -->
+  <g>
+    <ellipse cx="500" cy="350" rx="45" ry="35" fill="url(#smokeGradient)" opacity="0.6">
+      <animate attributeName="rx" values="45;55;45" dur="0.5s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.6;0.4;0.6" dur="0.5s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="470" cy="330" rx="30" ry="25" fill="url(#smokeGradient)" opacity="0.4">
+      <animate attributeName="cx" values="470;450;470" dur="0.7s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="520" cy="320" rx="25" ry="20" fill="url(#smokeGradient)" opacity="0.3"/>
+  </g>
+  
+  <!-- HYPERCAR - Aggressive Lambo-style design -->
+  <g filter="url(#carGlow)" transform="translate(520, 280)">
+    <!-- Car body - low aggressive profile -->
+    <path d="M0 60 
+             L20 60 
+             L40 45 
+             L60 35 
+             L100 25 
+             L140 20 
+             L180 18 
+             L220 20 
+             L250 30 
+             L270 50 
+             L270 70 
+             L0 70 Z" 
+          fill="url(#carGradient)" stroke="#00ffff" stroke-width="1"/>
+    
+    <!-- Windshield -->
+    <path d="M100 25 L120 15 L170 12 L190 15 L180 18 L140 20 L100 25" 
+          fill="#1a1a2e" stroke="#00d4ff" stroke-width="0.5" opacity="0.9"/>
+    
+    <!-- Side intake -->
+    <path d="M80 45 L100 35 L130 33 L130 45 Z" fill="#0a0a15" stroke="#00d4ff" stroke-width="0.5"/>
+    
+    <!-- Headlight -->
+    <path d="M250 35 L265 45 L265 55 L250 50 Z" fill="#ffff00" opacity="0.9">
+      <animate attributeName="opacity" values="0.9;1;0.9" dur="0.2s" repeatCount="indefinite"/>
+    </path>
+    
+    <!-- Front wheel -->
+    <circle cx="230" cy="70" r="22" fill="#1a1a1a" stroke="#333" stroke-width="3"/>
+    <circle cx="230" cy="70" r="12" fill="#444"/>
+    <circle cx="230" cy="70" r="5" fill="#666"/>
+    
+    <!-- Rear wheel -->
+    <circle cx="60" cy="70" r="22" fill="#1a1a1a" stroke="#333" stroke-width="3"/>
+    <circle cx="60" cy="70" r="12" fill="#444"/>
+    <circle cx="60" cy="70" r="5" fill="#666"/>
+    
+    <!-- Speed lines -->
+    <g stroke="#00d4ff" stroke-width="2" opacity="0.6">
+      <line x1="-30" y1="40" x2="-60" y2="40">
+        <animate attributeName="x1" values="-30;-40;-30" dur="0.3s" repeatCount="indefinite"/>
+      </line>
+      <line x1="-25" y1="55" x2="-70" y2="55">
+        <animate attributeName="x1" values="-25;-35;-25" dur="0.25s" repeatCount="indefinite"/>
+      </line>
+      <line x1="-20" y1="70" x2="-55" y2="70">
+        <animate attributeName="x1" values="-20;-30;-20" dur="0.35s" repeatCount="indefinite"/>
+      </line>
+    </g>
+  </g>
+  
+  <!-- THE ANGRY DAD -->
+  <g transform="translate(100, 180)">
+    <!-- Body - hunched forward in anger -->
+    <ellipse cx="50" cy="150" rx="35" ry="45" fill="#5d4e37"/>
+    
+    <!-- Cardigan/sweater vest -->
+    <ellipse cx="50" cy="145" rx="32" ry="40" fill="#8b7355"/>
+    <rect x="45" y="110" width="10" height="80" fill="#6b5344"/>
+    
+    <!-- Head -->
+    <ellipse cx="55" cy="85" rx="28" ry="32" fill="#e8c4a0"/>
+    
+    <!-- Wild grey hair - standing up in anger -->
+    <g fill="#b8b8b8">
+      <path d="M30 70 Q20 40 35 50 Q40 30 50 45 Q55 25 65 40 Q75 20 80 45 Q90 35 85 60 Q95 55 85 75">
+        <animate attributeName="d" 
+                 values="M30 70 Q20 40 35 50 Q40 30 50 45 Q55 25 65 40 Q75 20 80 45 Q90 35 85 60 Q95 55 85 75;
+                         M30 72 Q18 38 35 48 Q42 28 50 43 Q57 23 65 38 Q77 18 80 43 Q92 33 85 58 Q97 53 85 73;
+                         M30 70 Q20 40 35 50 Q40 30 50 45 Q55 25 65 40 Q75 20 80 45 Q90 35 85 60 Q95 55 85 75"
+                 dur="0.3s" repeatCount="indefinite"/>
+      </path>
+      <!-- Side hair tufts -->
+      <ellipse cx="25" cy="80" rx="8" ry="15" transform="rotate(-20 25 80)"/>
+      <ellipse cx="85" cy="75" rx="8" ry="12" transform="rotate(15 85 75)"/>
+    </g>
+    
+    <!-- Angry eyebrows - VERY angry -->
+    <g fill="#666" stroke="#444" stroke-width="2">
+      <path d="M38 72 L55 80 L55 78 L40 68 Z"/>
+      <path d="M72 72 L60 80 L60 78 L70 68 Z"/>
+    </g>
+    
+    <!-- Eyes - furious squint -->
+    <g>
+      <ellipse cx="45" cy="82" rx="6" ry="4" fill="white"/>
+      <ellipse cx="65" cy="82" rx="6" ry="4" fill="white"/>
+      <circle cx="46" cy="82" r="3" fill="#3a2a1a"/>
+      <circle cx="66" cy="82" r="3" fill="#3a2a1a"/>
+      <!-- Anger veins -->
+      <path d="M38 78 L42 80" stroke="#cc0000" stroke-width="0.5" opacity="0.7"/>
+      <path d="M72 78 L68 80" stroke="#cc0000" stroke-width="0.5" opacity="0.7"/>
+    </g>
+    
+    <!-- Nose - bulbous angry dad nose -->
+    <path d="M52 85 Q50 95 55 100 Q60 98 58 90" fill="#d4a574"/>
+    
+    <!-- SCREAMING mouth -->
+    <ellipse cx="55" cy="115" rx="15" ry="12" fill="#4a0000"/>
+    <path d="M42 110 Q55 105 68 110" stroke="#e8c4a0" stroke-width="2" fill="none"/>
+    <!-- Teeth -->
+    <rect x="46" y="108" width="5" height="6" fill="#f5f5dc" rx="1"/>
+    <rect x="52" y="108" width="5" height="6" fill="#f5f5dc" rx="1"/>
+    <rect x="58" y="108" width="5" height="6" fill="#f5f5dc" rx="1"/>
+    <!-- Tongue -->
+    <ellipse cx="55" cy="120" rx="8" ry="5" fill="#cc6666"/>
+    
+    <!-- Angry wrinkles -->
+    <g stroke="#c4a080" stroke-width="1" fill="none" opacity="0.6">
+      <path d="M35 65 Q40 62 45 65"/>
+      <path d="M65 65 Q70 62 75 65"/>
+      <path d="M40 125 Q55 130 70 125"/>
+    </g>
+    
+    <!-- ARM WITH CANE - raised and shaking -->
+    <g>
+      <!-- Arm -->
+      <path d="M85 130 Q120 100 160 60" stroke="#e8c4a0" stroke-width="16" fill="none" stroke-linecap="round">
+        <animate attributeName="d" 
+                 values="M85 130 Q120 100 160 60;M85 130 Q125 95 165 55;M85 130 Q120 100 160 60" 
+                 dur="0.15s" repeatCount="indefinite"/>
+      </path>
+      <!-- Sleeve -->
+      <path d="M80 125 Q95 115 105 105" stroke="#8b7355" stroke-width="20" fill="none" stroke-linecap="round"/>
+      
+      <!-- Hand/fist -->
+      <circle cx="165" cy="55" r="12" fill="#e8c4a0">
+        <animate attributeName="cx" values="165;170;165" dur="0.15s" repeatCount="indefinite"/>
+        <animate attributeName="cy" values="55;50;55" dur="0.15s" repeatCount="indefinite"/>
+      </circle>
+      
+      <!-- THE CANE -->
+      <g>
+        <animate attributeName="transform" 
+                 values="rotate(0 165 55);rotate(10 165 55);rotate(0 165 55)" 
+                 dur="0.15s" repeatCount="indefinite"/>
+        <!-- Cane shaft -->
+        <line x1="170" y1="50" x2="250" y2="-20" stroke="#4a3728" stroke-width="8" stroke-linecap="round"/>
+        <!-- Cane handle -->
+        <path d="M250 -20 Q270 -25 275 -10 Q275 5 260 0" stroke="#4a3728" stroke-width="8" fill="none" stroke-linecap="round"/>
+        <!-- Gold band -->
+        <ellipse cx="175" cy="45" rx="6" ry="4" fill="#ffd700" transform="rotate(-50 175 45)"/>
+      </g>
+    </g>
+    
+    <!-- Other arm - fist clenched at side -->
+    <path d="M15 130 Q0 150 10 170" stroke="#e8c4a0" stroke-width="14" fill="none" stroke-linecap="round"/>
+    <circle cx="10" cy="175" r="10" fill="#e8c4a0"/>
+    
+    <!-- Legs -->
+    <rect x="30" y="190" width="18" height="50" fill="#3d3d3d" rx="3"/>
+    <rect x="55" y="190" width="18" height="50" fill="#3d3d3d" rx="3"/>
+    
+    <!-- Slippers -->
+    <ellipse cx="38" cy="245" rx="14" ry="8" fill="#8b4513"/>
+    <ellipse cx="64" cy="245" rx="14" ry="8" fill="#8b4513"/>
+  </g>
+  
+  <!-- ANGER EFFECTS around dad -->
+  <g filter="url(#angerGlow)">
+    <!-- Anger symbols -->
+    <g fill="none" stroke="#ff4444" stroke-width="3">
+      <path d="M200 140 L210 150 M210 140 L200 150" opacity="0.8">
+        <animate attributeName="opacity" values="0.8;0.4;0.8" dur="0.2s" repeatCount="indefinite"/>
+      </path>
+      <path d="M230 120 L240 130 M240 120 L230 130" opacity="0.6">
+        <animate attributeName="opacity" values="0.6;0.3;0.6" dur="0.25s" repeatCount="indefinite"/>
+      </path>
+      <path d="M180 160 L190 170 M190 160 L180 170" opacity="0.7">
+        <animate attributeName="opacity" values="0.7;0.35;0.7" dur="0.22s" repeatCount="indefinite"/>
+      </path>
+    </g>
+    
+    <!-- Yelling effect lines -->
+    <g stroke="#ffcc00" stroke-width="2" opacity="0.5">
+      <line x1="180" y1="295" x2="220" y2="290"/>
+      <line x1="180" y1="300" x2="230" y2="300"/>
+      <line x1="180" y1="305" x2="220" y2="310"/>
+    </g>
+  </g>
+  
+  <!-- Speech bubble with "!!!" -->
+  <g transform="translate(200, 80)">
+    <ellipse cx="40" cy="30" rx="45" ry="30" fill="white" stroke="#333" stroke-width="2"/>
+    <polygon points="20,55 35,45 40,60" fill="white" stroke="#333" stroke-width="2"/>
+    <polygon points="22,54 34,46 38,57" fill="white"/>
+    <text x="40" y="40" font-family="Impact, sans-serif" font-size="32" fill="#cc0000" text-anchor="middle" font-weight="bold">!!!</text>
+  </g>
+  
+  <!-- DADBOT TEXT - Modern tech font style -->
+  <g transform="translate(400, 440)">
+    <!-- Text shadow/glow -->
+    <text x="0" y="0" font-family="'Orbitron', 'Rajdhani', 'Share Tech', monospace" font-size="72" 
+          fill="#00d4ff" opacity="0.3" text-anchor="middle" letter-spacing="8">
+      dadbot
+    </text>
+    
+    <!-- Main text -->
+    <text x="0" y="0" font-family="'Orbitron', 'Rajdhani', 'Share Tech', monospace" font-size="72" 
+          fill="white" text-anchor="middle" letter-spacing="8" font-weight="bold">
+      dadbot
+    </text>
+    
+    <!-- Accent line under text -->
+    <rect x="-160" y="15" width="320" height="3" fill="#00d4ff" rx="1">
+      <animate attributeName="width" values="320;330;320" dur="1s" repeatCount="indefinite"/>
+      <animate attributeName="x" values="-160;-165;-160" dur="1s" repeatCount="indefinite"/>
+    </rect>
+    
+    <!-- Dot accent -->
+    <circle cx="175" cy="-25" r="6" fill="#ff4444">
+      <animate attributeName="r" values="6;8;6" dur="0.5s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  
+  <!-- Tagline -->
+  <text x="400" y="480" font-family="'Share Tech Mono', monospace" font-size="14" 
+        fill="#888" text-anchor="middle" letter-spacing="4">
+    SLOW DOWN, YOU MANIACS!
+  </text>
+  
+  <!-- Corner tech decorations -->
+  <g stroke="#00d4ff" stroke-width="1" fill="none" opacity="0.4">
+    <path d="M20 20 L20 50 M20 20 L50 20"/>
+    <path d="M780 20 L780 50 M780 20 L750 20"/>
+    <path d="M20 480 L20 450 M20 480 L50 480"/>
+    <path d="M780 480 L780 450 M780 480 L750 480"/>
+  </g>
+</svg>

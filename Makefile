@@ -1,15 +1,16 @@
-.PHONY: install dev test lint format run clean help
+.PHONY: install dev test lint format run clean help gui
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  install      - Install dependencies with uv"
-	@echo "  dev          - Install with dev dependencies"
-	@echo "  test         - Run pytest"
-	@echo "  lint         - Run ruff check"
-	@echo "  format       - Run ruff format"
-	@echo "  run          - Execute main pipeline"
-	@echo "  clean        - Remove artifacts"
+	@echo "  install        - Install dependencies with uv"
+	@echo "  dev            - Install with dev dependencies"
+	@echo "  test           - Run pytest"
+	@echo "  lint           - Run ruff check"
+	@echo "  format         - Run ruff format"
+	@echo "  run            - Execute main pipeline"
+	@echo "  gui            - Run the GUI application"
+	@echo "  clean          - Remove artifacts"
 
 install:
 	uv sync
@@ -36,6 +37,9 @@ run-video:
 		exit 1; \
 	fi
 	uv run python -m src.main --source-video $(VIDEO)
+
+gui:
+	uv run python run_gui.py
 
 clean:
 	rm -rf __pycache__ .pytest_cache .ruff_cache

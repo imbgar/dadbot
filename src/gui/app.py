@@ -5,6 +5,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from PIL import Image, ImageTk
+
 from src.gui.components import ActionButton, ConsoleOutput, SettingsPanel, StatusBar
 from src.gui.styles import COLORS, FONTS, configure_styles
 from src.gui.panels.zone_panel import ZoneDefinitionPanel
@@ -12,6 +14,9 @@ from src.gui.panels.calibration_panel import CalibrationPanel
 from src.gui.panels.viewer_panel import LiveViewerPanel
 from src.gui.panels.processor_panel import ProcessorPanel
 from src.settings import AppSettings, load_or_create_settings
+
+# Get the assets directory
+ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
 
 
 class DadBotApp:
@@ -66,27 +71,22 @@ class DadBotApp:
         sidebar.pack(side="left", fill="y", padx=0, pady=0)
         sidebar.pack_propagate(False)
 
-        # App title
-        title_frame = ttk.Frame(sidebar, style="Card.TFrame")
-        title_frame.pack(fill="x", padx=20, pady=20)
+        # Logo display
+        logo_frame = ttk.Frame(sidebar, style="Card.TFrame")
+        logo_frame.pack(fill="x", padx=5, pady=10)
 
-        title_label = tk.Label(
-            title_frame,
-            text="DadBot",
-            font=("Segoe UI", 24, "bold"),
-            fg=COLORS["accent"],
+        # Create canvas for logo
+        self.logo_canvas = tk.Canvas(
+            logo_frame,
+            width=290,
+            height=180,
             bg=COLORS["bg_medium"],
+            highlightthickness=0,
         )
-        title_label.pack(anchor="w")
+        self.logo_canvas.pack(fill="x", pady=5)
 
-        subtitle_label = tk.Label(
-            title_frame,
-            text="Traffic Monitor",
-            font=FONTS["body"],
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_medium"],
-        )
-        subtitle_label.pack(anchor="w")
+        # Load and display the logo
+        self._load_logo()
 
         # Separator
         ttk.Separator(sidebar, orient="horizontal").pack(fill="x", padx=20, pady=10)
@@ -321,6 +321,42 @@ class DadBotApp:
         # Update status bar
         zone_status = "Zone: Enabled" if self.settings.zone.enabled else "Zone: Disabled"
         self.status_bar.update_section("zone", zone_status)
+
+    def _load_logo(self):
+        """Load and display the logo image."""
+        # Try PNG or GIF
+        png_path = ASSETS_DIR / "dadbot-logo.png"
+        gif_path = ASSETS_DIR / "dadbot-logo.gif"
+
+        logo_path = gif_path if gif_path.exists() else png_path
+
+        if logo_path.exists():
+            try:
+                img = Image.open(logo_path)
+                img = img.resize((280, 175), Image.Resampling.LANCZOS)
+                self._logo_image = ImageTk.PhotoImage(img)
+                self.logo_canvas.create_image(145, 90, image=self._logo_image)
+            except Exception:
+                self._draw_fallback_logo()
+        else:
+            self._draw_fallback_logo()
+
+    def _draw_fallback_logo(self):
+        """Draw a simple text logo as fallback."""
+        self.logo_canvas.create_text(
+            145,
+            70,
+            text="DadBot",
+            font=("Segoe UI", 28, "bold"),
+            fill=COLORS["accent"],
+        )
+        self.logo_canvas.create_text(
+            145,
+            110,
+            text="Traffic Monitor",
+            font=("Segoe UI", 12),
+            fill=COLORS["text_secondary"],
+        )
 
     def run(self):
         """Start the application main loop."""

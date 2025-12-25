@@ -24,12 +24,14 @@ class ZoneDefinitionPanel(ttk.Frame):
         parent,
         settings: AppSettings,
         on_change: Callable,
+        on_status: Callable[[str], None] = None,
         **kwargs
     ):
         super().__init__(parent, style="Main.TFrame", **kwargs)
 
         self.settings = settings
         self.on_change = on_change
+        self.on_status = on_status
 
         self.video_path: str | None = None
         self.original_frame: np.ndarray | None = None
@@ -717,7 +719,9 @@ class ZoneDefinitionPanel(ttk.Frame):
         self._update_saved_zones_list()
         self._update_history_list()
 
-        messagebox.showinfo("Success", f"Zone '{name}' saved with {len(self.points)} points")
+        # Update status bar instead of popup
+        if self.on_status:
+            self.on_status(f"✓ Zone '{name}' saved ({len(self.points)} pts)")
 
     def _on_zone_toggle(self):
         """Handle zone enabled checkbox toggle."""

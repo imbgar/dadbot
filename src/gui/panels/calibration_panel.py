@@ -34,12 +34,14 @@ class CalibrationPanel(ttk.Frame):
         parent,
         settings: AppSettings,
         on_change: Callable,
+        on_status: Callable[[str], None] = None,
         **kwargs
     ):
         super().__init__(parent, style="Main.TFrame", **kwargs)
 
         self.settings = settings
         self.on_change = on_change
+        self.on_status = on_status
 
         self.video_path: str | None = None
         self.original_frame: np.ndarray | None = None
@@ -634,14 +636,10 @@ class CalibrationPanel(ttk.Frame):
         self._update_saved_calibrations_list()
         self._update_history_list()
 
+        # Update status bar instead of popup
         ppf = self._calculate_ppf()
-        messagebox.showinfo(
-            "Success",
-            f"Calibration '{name}' saved!\n\n"
-            f"Pixel distance: {self._calculate_pixel_distance()} px\n"
-            f"Real distance: {feet_dist} ft\n"
-            f"Pixels per foot: {ppf:.2f}"
-        )
+        if self.on_status:
+            self.on_status(f"✓ Calibration '{name}' saved ({ppf:.1f} px/ft)")
 
     # ==================== Undo/Redo Methods ====================
 

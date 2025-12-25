@@ -160,9 +160,10 @@ class DadBotApp:
         self.status_bar = StatusBar(self.root)
         self.status_bar.pack(side="bottom", fill="x", padx=10, pady=5)
 
-        self.status_bar.add_section("status", "Ready", width=30)
-        self.status_bar.add_section("video", "No video loaded", width=40)
-        self.status_bar.add_section("zone", "Zone: Enabled", width=20)
+        self.status_bar.add_section("status", "Ready", width=25)
+        self.status_bar.add_section("video", "No video loaded", width=35)
+        self.status_bar.add_section("zone", "Zone: Enabled", width=15)
+        self.status_bar.add_section("save_status", "", width=30)
 
     def _clear_content(self):
         """Clear the content area."""
@@ -208,9 +209,11 @@ class DadBotApp:
             self.content_frame,
             self.settings,
             self._on_settings_changed,
+            self._update_save_status,
         )
         self.active_panel.pack(fill="both", expand=True)
         self.status_bar.update_section("status", "Zone Definition")
+        self.status_bar.update_section("save_status", "")
 
     def _show_calibration_panel(self):
         """Show the calibration panel."""
@@ -219,9 +222,11 @@ class DadBotApp:
             self.content_frame,
             self.settings,
             self._on_settings_changed,
+            self._update_save_status,
         )
         self.active_panel.pack(fill="both", expand=True)
         self.status_bar.update_section("status", "Calibration")
+        self.status_bar.update_section("save_status", "")
 
     def _show_viewer_panel(self):
         """Show the live viewer panel."""
@@ -321,6 +326,10 @@ class DadBotApp:
         # Update status bar
         zone_status = "Zone: Enabled" if self.settings.zone.enabled else "Zone: Disabled"
         self.status_bar.update_section("zone", zone_status)
+
+    def _update_save_status(self, message: str):
+        """Update the save status in the status bar."""
+        self.status_bar.update_section("save_status", message)
 
     def _load_logo(self):
         """Load and display the logo image."""

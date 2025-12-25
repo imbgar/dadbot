@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from src.gui.components import ActionButton, ConsoleOutput, SettingsPanel, StatusBar
+from src.gui.components import ActionButton, ConsoleOutput, ScrollableFrame, SettingsPanel, StatusBar
 from src.gui.styles import COLORS, FONTS, configure_styles
 from src.gui.panels.zone_panel import ZoneDefinitionPanel
 from src.gui.panels.calibration_panel import CalibrationPanel
@@ -71,7 +71,7 @@ class DadBotApp:
         sidebar.pack(side="left", fill="y", padx=0, pady=0)
         sidebar.pack_propagate(False)
 
-        # Logo display
+        # Logo display (fixed at top)
         logo_frame = ttk.Frame(sidebar, style="Card.TFrame")
         logo_frame.pack(fill="x", padx=5, pady=10)
 
@@ -91,9 +91,12 @@ class DadBotApp:
         # Separator
         ttk.Separator(sidebar, orient="horizontal").pack(fill="x", padx=20, pady=10)
 
-        # Navigation buttons
-        nav_frame = ttk.Frame(sidebar, style="Card.TFrame")
-        nav_frame.pack(fill="x", padx=10, pady=10)
+        # Scrollable navigation area
+        self.sidebar_scroll = ScrollableFrame(sidebar, bg_color=COLORS["bg_medium"])
+        self.sidebar_scroll.pack(fill="both", expand=True)
+
+        nav_frame = self.sidebar_scroll.scrollable_frame
+        nav_frame.configure(padding=(10, 10))
 
         # Zone Definition Button
         ActionButton(
@@ -132,10 +135,7 @@ class DadBotApp:
             accent=True,
         ).pack(fill="x", pady=5)
 
-        # Spacer
-        ttk.Frame(sidebar, style="Card.TFrame").pack(fill="both", expand=True)
-
-        # Settings button at bottom
+        # Settings button at bottom (fixed)
         settings_frame = ttk.Frame(sidebar, style="Card.TFrame")
         settings_frame.pack(fill="x", padx=20, pady=20)
 

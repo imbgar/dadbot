@@ -1,10 +1,120 @@
 """Reusable GUI components for DadBot Traffic Monitor."""
 
+import platform
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable
 
 from src.gui.styles import COLORS, FONTS, ToolTip
+
+
+class ScrollableFrame(ttk.Frame):
+    """A scrollable frame with mouse wheel support.
+
+    Use `self.scrollable_frame` to add child widgets.
+    """
+
+    def __init__(self, parent, bg_color: str = None, **kwargs):
+        super().__init__(parent, **kwargs)
+
+        bg = bg_color or COLORS["bg_medium"]
+        self._is_macos = platform.system() == "Darwin"
+        self._tk_version = float(tk.TkVersion)
+
+        # Create canvas and scrollbar
+        self.canvas = tk.Canvas(
+            self,
+            bg=bg,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.scrollbar = ttk.Scrollbar(
+            self,
+            orient="vertical",
+            command=self.canvas.yview,
+        )
+        self.scrollable_frame = ttk.Frame(self.canvas, style="CardInner.TFrame")
+
+        # Configure scrolling
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+
+        self._window_id = self.canvas.create_window(
+            (0, 0),
+            window=self.scrollable_frame,
+            anchor="nw",
+        )
+
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        # Pack widgets
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        # Bind canvas resize to update scrollable frame width
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        # Bind scroll events to canvas and frame
+        self._bind_scroll_events(self.canvas)
+        self._bind_scroll_events(self.scrollable_frame)
+
+    def _on_frame_configure(self, event):
+        """Update scroll region and bind scroll events to new children."""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        # Bind scroll events to all children
+        self._bind_to_all_children(self.scrollable_frame)
+
+    def _on_canvas_configure(self, event):
+        """Update scrollable frame width when canvas resizes."""
+        self.canvas.itemconfig(self._window_id, width=event.width)
+
+    def _bind_to_all_children(self, widget):
+        """Recursively bind scroll events to all children."""
+        for child in widget.winfo_children():
+            self._bind_scroll_events(child)
+            self._bind_to_all_children(child)
+
+    def _bind_scroll_events(self, widget):
+        """Bind all scroll events to a widget."""
+        # MouseWheel - works with physical mouse on all platforms
+        if self._is_macos:
+            widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
+        elif platform.system() == "Windows":
+            widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
+        else:  # Linux
+            widget.bind("<Button-4>", self._on_mousewheel, add="+")
+            widget.bind("<Button-5>", self._on_mousewheel, add="+")
+
+        # TouchpadScroll - Tk 8.7+/9 trackpad support (macOS and Windows)
+        if self._tk_version >= 8.7:
+            widget.bind("<TouchpadScroll>", self._on_touchpad_scroll, add="+")
+
+    def _on_touchpad_scroll(self, event):
+        """Handle TouchpadScroll event (Tk 8.7+/9 trackpad gestures)."""
+        # In Tk 9, delta contains packed X and Y deltas
+        # Y delta is in low 16 bits (signed)
+        delta = event.delta
+        # Extract Y delta (low 16 bits as signed int)
+        y_delta = delta & 0xFFFF
+        if y_delta >= 0x8000:
+            y_delta -= 0x10000
+
+        # Scale the delta (0.5 for slower scrolling)
+        if y_delta != 0:
+            self.canvas.yview_scroll(int(-1 * y_delta / 2), "units")
+        return "break"
+
+    def _on_mousewheel(self, event):
+        """Handle mousewheel scroll from physical mouse."""
+        if self._is_macos:
+            self.canvas.yview_scroll(int(-1 * event.delta), "units")
+        elif platform.system() == "Windows":
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        else:  # Linux
+            if event.num == 4:
+                self.canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self.canvas.yview_scroll(1, "units")
+        return "break"
 
 
 class ActionButton(ttk.Frame):

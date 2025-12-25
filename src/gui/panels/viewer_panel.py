@@ -18,6 +18,7 @@ from src.config import (
     ZoneConfig,
 )
 from src.detector import VehicleDetector
+from src.gui.components import ScrollableFrame
 from src.gui.styles import COLORS, FONTS
 from src.settings import AppSettings, LeadCornerMode, LabelDisplayMode
 from src.tracker import VehicleTracker
@@ -129,30 +130,16 @@ class LiveViewerPanel(ttk.Frame):
         )
         self.frame_label.pack(side="right", padx=10)
 
-        # Right side - Configuration panel
+        # Right side - Configuration panel (scrollable)
         config_frame = ttk.Frame(content, style="Card.TFrame", width=320)
         config_frame.pack(side="right", fill="y")
         config_frame.pack_propagate(False)
 
         # Scrollable config area
-        config_canvas = tk.Canvas(
-            config_frame,
-            bg=COLORS["bg_medium"],
-            highlightthickness=0,
-        )
-        scrollbar = ttk.Scrollbar(config_frame, orient="vertical", command=config_canvas.yview)
-        scrollable_frame = ttk.Frame(config_canvas, style="CardInner.TFrame")
+        self.config_scroll = ScrollableFrame(config_frame, bg_color=COLORS["bg_medium"])
+        self.config_scroll.pack(fill="both", expand=True)
 
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: config_canvas.configure(scrollregion=config_canvas.bbox("all"))
-        )
-
-        config_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=300)
-        config_canvas.configure(yscrollcommand=scrollbar.set)
-
-        scrollbar.pack(side="right", fill="y")
-        config_canvas.pack(side="left", fill="both", expand=True)
+        scrollable_frame = self.config_scroll.scrollable_frame
 
         # Config sections
         self._create_video_section(scrollable_frame)

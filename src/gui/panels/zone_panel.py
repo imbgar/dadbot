@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
+from src.gui.components import ScrollableFrame
 from src.gui.styles import COLORS, FONTS
 from src.settings import AppSettings, SavedZone
 from src.utils import extract_first_frame, get_video_info
@@ -126,13 +127,17 @@ class ZoneDefinitionPanel(ttk.Frame):
         self.canvas.bind("<Motion>", self._on_mouse_move)
         self.canvas.bind("<Configure>", self._on_canvas_resize)
 
-        # Right side - Controls
+        # Right side - Controls (scrollable)
         controls_frame = ttk.Frame(content, style="Card.TFrame", width=280)
         controls_frame.pack(side="right", fill="y")
         controls_frame.pack_propagate(False)
 
-        controls_inner = ttk.Frame(controls_frame, style="CardInner.TFrame")
-        controls_inner.pack(fill="both", expand=True, padx=15, pady=15)
+        self.controls_scroll = ScrollableFrame(controls_frame, bg_color=COLORS["bg_medium"])
+        self.controls_scroll.pack(fill="both", expand=True)
+
+        controls_inner = self.controls_scroll.scrollable_frame
+        # Add padding inside scrollable area
+        controls_inner.configure(padding=(15, 15))
 
         # Load video button
         ttk.Label(

@@ -1,6 +1,7 @@
 """Live Viewer Panel for DadBot Traffic Monitor."""
 
 import os
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -64,6 +65,16 @@ class LiveViewerPanel(ttk.Frame):
         self.video_info: sv.VideoInfo | None = None
         self._pipeline_initialized = False
         self._pipeline_error: str | None = None
+
+        # Inference FPS cap - only run detection every N ms
+        self._last_inference_time: float = 0.0
+        self._last_tracking_result = None  # Cache last result for display
+
+        # FPS tracking for display
+        self._frame_times: list[float] = []
+        self._fps_update_interval = 0.5  # Update FPS display every 0.5 seconds
+        self._last_fps_update: float = 0.0
+        self._current_fps: float = 0.0
 
         self._create_layout()
 
@@ -324,6 +335,18 @@ class LiveViewerPanel(ttk.Frame):
         inner = ttk.Frame(section, style="CardInner.TFrame")
         inner.pack(fill="x", padx=10, pady=10)
 
+        # Detection toggle
+        self.detection_enabled_var = tk.BooleanVar(value=self.settings.detection.detection_enabled)
+        ttk.Checkbutton(
+            inner,
+            text="Enable ML Detection",
+            variable=self.detection_enabled_var,
+            command=self._on_detection_toggle,
+            style="Modern.TCheckbutton",
+        ).pack(anchor="w", pady=(0, 10))
+
+        ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=5)
+
         # Confidence threshold
         ttk.Label(inner, text="Confidence Threshold:", style="Body.TLabel").pack(anchor="w")
 
@@ -445,6 +468,13 @@ class LiveViewerPanel(ttk.Frame):
         self._pipeline_initialized = False
         self._pipeline_error = None
         self.frame_index = 0
+        # Reset inference cache
+        self._last_inference_time = 0.0
+        self._last_tracking_result = None
+        # Reset FPS tracking
+        self._frame_times = []
+        self._last_fps_update = 0.0
+        self._current_fps = 0.0
 
     def _load_video(self):
         """Load a video file."""
@@ -753,28 +783,57 @@ class LiveViewerPanel(ttk.Frame):
         if not ret:
             return False
 
+        # Calculate and update FPS display
+        current_time = time.time()
+        self._frame_times.append(current_time)
+        # Keep only last 30 frame times for rolling average
+        if len(self._frame_times) > 30:
+            self._frame_times.pop(0)
+
+        # Update FPS display periodically (not every frame to reduce overhead)
+        if current_time - self._last_fps_update >= self._fps_update_interval:
+            if len(self._frame_times) >= 2:
+                time_span = self._frame_times[-1] - self._frame_times[0]
+                if time_span > 0:
+                    self._current_fps = (len(self._frame_times) - 1) / time_span
+            self._last_fps_update = current_time
+
+        # Update frame label with FPS
         if self.is_rtsp_mode:
-            self.frame_label.configure(text=f"LIVE | Frame: {self.frame_index}")
+            self.frame_label.configure(text=f"LIVE | {self._current_fps:.1f} FPS | Frame: {self.frame_index}")
         else:
-            self.frame_label.configure(text=f"Frame: {self.frame_index} / {self.total_frames}")
+            self.frame_label.configure(text=f"{self._current_fps:.1f} FPS | Frame: {self.frame_index} / {self.total_frames}")
 
-        # Run ML pipeline if initialized
-        if self._pipeline_initialized and self.detector and self.tracker and self.visualizer:
+        # Run ML pipeline if initialized and detection is enabled
+        detection_enabled = self.detection_enabled_var.get()
+        pipeline_ready = self._pipeline_initialized and self.detector and self.tracker and self.visualizer
+
+        if detection_enabled and pipeline_ready:
             try:
-                # Detect vehicles
-                detection_result = self.detector.detect(frame, self.frame_index)
+                # Check if we should run inference (FPS cap)
+                current_time = time.time()
+                min_interval = 1.0 / self.settings.detection.max_inference_fps
+                should_infer = (current_time - self._last_inference_time) >= min_interval
 
-                # Track vehicles
-                tracking_result = self.tracker.update(detection_result)
+                if should_infer:
+                    # Run detection and tracking
+                    detection_result = self.detector.detect(frame, self.frame_index)
+                    tracking_result = self.tracker.update(detection_result)
+                    self._last_tracking_result = tracking_result
+                    self._last_inference_time = current_time
 
-                # Annotate frame
-                frame = self.visualizer.annotate_frame(frame, tracking_result)
+                # Annotate frame with current or cached tracking result
+                if self._last_tracking_result is not None:
+                    frame = self.visualizer.annotate_frame(frame, self._last_tracking_result)
+                elif self.show_zone_var.get() and self.settings.zone.polygon_points:
+                    frame = self._draw_zone_overlay(frame)
+
             except Exception:
                 # Fall back to simple zone overlay on error
                 if self.show_zone_var.get() and self.settings.zone.polygon_points:
                     frame = self._draw_zone_overlay(frame)
         else:
-            # No ML pipeline - just draw zone overlay if enabled
+            # No ML pipeline or detection disabled - just draw zone overlay if enabled
             if self.show_zone_var.get() and self.settings.zone.polygon_points:
                 frame = self._draw_zone_overlay(frame)
 
@@ -843,6 +902,14 @@ class LiveViewerPanel(ttk.Frame):
         self.settings.visualization.show_zone_overlay = self.show_zone_var.get()
         self.settings.visualization.show_stats_overlay = self.show_stats_var.get()
         self.settings.visualization.highlight_violations = self.highlight_violations_var.get()
+        self.on_change()
+
+    def _on_detection_toggle(self):
+        """Handle detection enable/disable toggle."""
+        self.settings.detection.detection_enabled = self.detection_enabled_var.get()
+        # Clear cached results when toggling off
+        if not self.detection_enabled_var.get():
+            self._last_tracking_result = None
         self.on_change()
 
     def _on_conf_change(self, value):

@@ -90,6 +90,10 @@ class DetectionSettings(BaseModel):
     confidence_threshold: float = 0.3
     iou_threshold: float = 0.5
 
+    # Live viewer performance settings
+    detection_enabled: bool = True  # Toggle ML detection on/off
+    max_inference_fps: int = 15  # Cap inference rate for performance
+
 
 class TrackingSettings(BaseModel):
     """Vehicle tracking settings."""

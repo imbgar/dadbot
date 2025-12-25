@@ -40,6 +40,16 @@ class SavedZone(BaseModel):
     saved_at: str  # ISO format timestamp
 
 
+class SavedCalibration(BaseModel):
+    """A saved calibration configuration."""
+
+    name: str
+    reference_distance_feet: float
+    point1: list[int]  # [x, y]
+    point2: list[int]  # [x, y]
+    saved_at: str  # ISO format timestamp
+
+
 class ZoneSettings(BaseModel):
     """Road zone filtering settings."""
 
@@ -65,6 +75,12 @@ class CalibrationSettings(BaseModel):
     reference_pixel_start_x: int = 0
     reference_pixel_end_x: int = 269
     reference_pixel_y: int = 400
+
+    # Named saved calibrations
+    saved_calibrations: list["SavedCalibration"] = Field(default_factory=list)
+    # History of saved states (most recent first)
+    save_history: list["SavedCalibration"] = Field(default_factory=list)
+    max_history: int = 20
 
 
 class DetectionSettings(BaseModel):

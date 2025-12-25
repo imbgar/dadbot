@@ -62,13 +62,21 @@ class ZoneDefinitionPanel(ttk.Frame):
 
         self._create_layout()
 
-        # Bind keyboard shortcuts
+        # Bind keyboard shortcuts (Cmd on macOS, Ctrl on others)
+        # macOS uses Command key
+        self.bind_all("<Command-z>", self._on_undo_key)
+        self.bind_all("<Command-Z>", self._on_undo_key)
+        self.bind_all("<Command-Shift-z>", self._on_redo_key)
+        self.bind_all("<Command-Shift-Z>", self._on_redo_key)
+        self.bind_all("<Command-s>", self._on_save_key)
+        self.bind_all("<Command-S>", self._on_save_key)
+        # Also support Ctrl for non-macOS or external keyboards
         self.bind_all("<Control-z>", self._on_undo_key)
         self.bind_all("<Control-Z>", self._on_undo_key)
-        self.bind_all("<Control-y>", self._on_redo_key)
-        self.bind_all("<Control-Y>", self._on_redo_key)
         self.bind_all("<Control-Shift-z>", self._on_redo_key)
         self.bind_all("<Control-Shift-Z>", self._on_redo_key)
+        self.bind_all("<Control-s>", self._on_save_key)
+        self.bind_all("<Control-S>", self._on_save_key)
 
     def _create_layout(self):
         """Create the panel layout."""
@@ -736,8 +744,13 @@ class ZoneDefinitionPanel(ttk.Frame):
         return "break"
 
     def _on_redo_key(self, event):
-        """Handle Ctrl+Y or Ctrl+Shift+Z keyboard shortcut."""
+        """Handle Cmd+Shift+Z keyboard shortcut."""
         self._redo()
+        return "break"
+
+    def _on_save_key(self, event):
+        """Handle Cmd+S keyboard shortcut."""
+        self._save_zone()
         return "break"
 
     def _update_undo_redo_buttons(self):

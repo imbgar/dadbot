@@ -3,7 +3,7 @@
 from datetime import datetime
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 import cv2
@@ -272,20 +272,31 @@ class CalibrationPanel(ttk.Frame):
             style="Subheading.TLabel",
         ).pack(anchor="w", pady=(0, 5))
 
+        # Name entry
+        name_frame = ttk.Frame(controls_inner, style="CardInner.TFrame")
+        name_frame.pack(fill="x", pady=3)
+
+        ttk.Label(
+            name_frame,
+            text="Name:",
+            style="Body.TLabel",
+        ).pack(side="left")
+
+        self.calibration_name_var = tk.StringVar(value="Default")
+        self.calibration_name_entry = ttk.Entry(
+            name_frame,
+            textvariable=self.calibration_name_var,
+            font=FONTS["body"],
+        )
+        self.calibration_name_entry.pack(side="right", fill="x", expand=True, padx=(5, 0))
+
         save_btn = ttk.Button(
             controls_inner,
-            text="💾 Apply to Settings",
+            text="💾 Save",
             command=self._save_calibration,
             style="Accent.TButton",
         )
         save_btn.pack(fill="x", pady=3)
-
-        save_named_btn = ttk.Button(
-            controls_inner,
-            text="📝 Save As...",
-            command=self._save_calibration_as,
-        )
-        save_named_btn.pack(fill="x", pady=3)
 
         ttk.Separator(controls_inner, orient="horizontal").pack(fill="x", pady=10)
 
@@ -580,6 +591,33 @@ class CalibrationPanel(ttk.Frame):
             messagebox.showerror("Error", f"Invalid distance value: {e}")
             return
 
+        name = self.calibration_name_var.get().strip()
+        if not name:
+            messagebox.showwarning("Warning", "Please enter a name for the calibration")
+            return
+
+        # Check if name already exists
+        existing_names = [c.name for c in self.settings.calibration.saved_calibrations]
+        if name in existing_names:
+            if not messagebox.askyesno("Overwrite", f"Calibration '{name}' already exists. Overwrite?"):
+                return
+            # Remove existing
+            self.settings.calibration.saved_calibrations = [
+                c for c in self.settings.calibration.saved_calibrations if c.name != name
+            ]
+
+        # Create saved calibration
+        saved_cal = SavedCalibration(
+            name=name,
+            reference_distance_feet=feet_dist,
+            point1=list(self.point1),
+            point2=list(self.point2),
+            saved_at=datetime.now().isoformat(),
+        )
+
+        # Add to saved calibrations
+        self.settings.calibration.saved_calibrations.append(saved_cal)
+
         # Update settings - store X coordinates for horizontal measurement
         x1, y1 = self.point1
         x2, y2 = self.point2
@@ -590,15 +628,16 @@ class CalibrationPanel(ttk.Frame):
         self.settings.calibration.reference_pixel_y = (y1 + y2) // 2
 
         # Add to history
-        self._add_to_history("Auto-save")
+        self._add_to_history(name)
 
         self.on_change()
+        self._update_saved_calibrations_list()
         self._update_history_list()
 
         ppf = self._calculate_ppf()
         messagebox.showinfo(
             "Success",
-            f"Calibration saved!\n\n"
+            f"Calibration '{name}' saved!\n\n"
             f"Pixel distance: {self._calculate_pixel_distance()} px\n"
             f"Real distance: {feet_dist} ft\n"
             f"Pixels per foot: {ppf:.2f}"
@@ -715,72 +754,6 @@ class CalibrationPanel(ttk.Frame):
                 self.redo_btn.configure(state="disabled")
 
     # ==================== Save/Load Named Calibrations ====================
-
-    def _save_calibration_as(self):
-        """Save the calibration with a custom name."""
-        if self.point1 is None or self.point2 is None:
-            messagebox.showwarning("Warning", "Please define two calibration points")
-            return
-
-        try:
-            feet_dist = float(self.distance_var.get())
-            if feet_dist <= 0:
-                raise ValueError("Distance must be positive")
-        except ValueError as e:
-            messagebox.showerror("Error", f"Invalid distance value: {e}")
-            return
-
-        name = simpledialog.askstring(
-            "Save Calibration",
-            "Enter a name for this calibration:",
-            parent=self,
-        )
-
-        if not name:
-            return
-
-        name = name.strip()
-        if not name:
-            return
-
-        # Check if name already exists
-        existing_names = [c.name for c in self.settings.calibration.saved_calibrations]
-        if name in existing_names:
-            if not messagebox.askyesno("Overwrite", f"Calibration '{name}' already exists. Overwrite?"):
-                return
-            # Remove existing
-            self.settings.calibration.saved_calibrations = [
-                c for c in self.settings.calibration.saved_calibrations if c.name != name
-            ]
-
-        # Create new saved calibration
-        saved_cal = SavedCalibration(
-            name=name,
-            reference_distance_feet=feet_dist,
-            point1=list(self.point1),
-            point2=list(self.point2),
-            saved_at=datetime.now().isoformat(),
-        )
-
-        # Add to saved calibrations
-        self.settings.calibration.saved_calibrations.append(saved_cal)
-
-        # Also apply to current settings
-        x1, y1 = self.point1
-        x2, y2 = self.point2
-        self.settings.calibration.reference_distance_feet = feet_dist
-        self.settings.calibration.reference_pixel_start_x = min(x1, x2)
-        self.settings.calibration.reference_pixel_end_x = max(x1, x2)
-        self.settings.calibration.reference_pixel_y = (y1 + y2) // 2
-
-        # Add to history
-        self._add_to_history(name)
-
-        self.on_change()
-        self._update_saved_calibrations_list()
-        self._update_history_list()
-
-        messagebox.showinfo("Success", f"Calibration saved as '{name}'")
 
     def _update_saved_calibrations_list(self):
         """Update the saved calibrations listbox."""

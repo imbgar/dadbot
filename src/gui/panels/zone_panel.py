@@ -3,7 +3,7 @@
 from datetime import datetime
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 import cv2
@@ -244,20 +244,31 @@ class ZoneDefinitionPanel(ttk.Frame):
             style="Subheading.TLabel",
         ).pack(anchor="w", pady=(0, 5))
 
+        # Name entry
+        name_frame = ttk.Frame(controls_inner, style="CardInner.TFrame")
+        name_frame.pack(fill="x", pady=3)
+
+        ttk.Label(
+            name_frame,
+            text="Name:",
+            style="Body.TLabel",
+        ).pack(side="left")
+
+        self.zone_name_var = tk.StringVar(value="Default")
+        self.zone_name_entry = ttk.Entry(
+            name_frame,
+            textvariable=self.zone_name_var,
+            font=FONTS["body"],
+        )
+        self.zone_name_entry.pack(side="right", fill="x", expand=True, padx=(5, 0))
+
         save_btn = ttk.Button(
             controls_inner,
-            text="💾 Apply to Settings",
+            text="💾 Save",
             command=self._save_zone,
             style="Accent.TButton",
         )
         save_btn.pack(fill="x", pady=3)
-
-        save_named_btn = ttk.Button(
-            controls_inner,
-            text="📝 Save As...",
-            command=self._save_zone_as,
-        )
-        save_named_btn.pack(fill="x", pady=3)
 
         # Zone enabled checkbox
         self.zone_enabled_var = tk.BooleanVar(value=self.settings.zone.enabled)
@@ -669,18 +680,44 @@ class ZoneDefinitionPanel(ttk.Frame):
             messagebox.showwarning("Warning", "Zone requires at least 3 points")
             return
 
+        name = self.zone_name_var.get().strip()
+        if not name:
+            messagebox.showwarning("Warning", "Please enter a name for the zone")
+            return
+
+        # Check if name already exists in saved zones
+        existing_names = [z.name for z in self.settings.zone.saved_zones]
+        if name in existing_names:
+            if not messagebox.askyesno("Overwrite", f"Zone '{name}' already exists. Overwrite?"):
+                return
+            # Remove existing
+            self.settings.zone.saved_zones = [
+                z for z in self.settings.zone.saved_zones if z.name != name
+            ]
+
+        # Create saved zone
+        saved_zone = SavedZone(
+            name=name,
+            points=[list(p) for p in self.points],
+            saved_at=datetime.now().isoformat(),
+        )
+
+        # Add to saved zones
+        self.settings.zone.saved_zones.append(saved_zone)
+
         # Update settings
         self.settings.zone.polygon_points = [list(p) for p in self.points]
         self.settings.zone.enabled = self.zone_enabled_var.get()
         self.settings.zone.show_overlay = self.show_overlay_var.get()
 
         # Add to history
-        self._add_to_history("Auto-save")
+        self._add_to_history(name)
 
         self.on_change()
+        self._update_saved_zones_list()
         self._update_history_list()
 
-        messagebox.showinfo("Success", f"Zone applied with {len(self.points)} points")
+        messagebox.showinfo("Success", f"Zone '{name}' saved with {len(self.points)} points")
 
     def _on_zone_toggle(self):
         """Handle zone enabled checkbox toggle."""
@@ -768,57 +805,6 @@ class ZoneDefinitionPanel(ttk.Frame):
                 self.redo_btn.configure(state="disabled")
 
     # ==================== Save/Load Named Zones ====================
-
-    def _save_zone_as(self):
-        """Save the zone with a custom name."""
-        if len(self.points) < 3:
-            messagebox.showwarning("Warning", "Zone requires at least 3 points")
-            return
-
-        name = simpledialog.askstring(
-            "Save Zone",
-            "Enter a name for this zone:",
-            parent=self,
-        )
-
-        if not name:
-            return
-
-        name = name.strip()
-        if not name:
-            return
-
-        # Check if name already exists
-        existing_names = [z.name for z in self.settings.zone.saved_zones]
-        if name in existing_names:
-            if not messagebox.askyesno("Overwrite", f"Zone '{name}' already exists. Overwrite?"):
-                return
-            # Remove existing
-            self.settings.zone.saved_zones = [
-                z for z in self.settings.zone.saved_zones if z.name != name
-            ]
-
-        # Create new saved zone
-        saved_zone = SavedZone(
-            name=name,
-            points=[list(p) for p in self.points],
-            saved_at=datetime.now().isoformat(),
-        )
-
-        # Add to saved zones
-        self.settings.zone.saved_zones.append(saved_zone)
-
-        # Also apply to current settings
-        self.settings.zone.polygon_points = [list(p) for p in self.points]
-
-        # Add to history
-        self._add_to_history(name)
-
-        self.on_change()
-        self._update_saved_zones_list()
-        self._update_history_list()
-
-        messagebox.showinfo("Success", f"Zone saved as '{name}'")
 
     def _update_saved_zones_list(self):
         """Update the saved zones listbox."""

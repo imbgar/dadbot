@@ -1,5 +1,6 @@
 """Live Viewer Panel for DadBot Traffic Monitor."""
 
+import os
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -512,6 +513,20 @@ class LiveViewerPanel(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load video: {e}")
 
+    def _set_rtsp_options(self):
+        """Set FFmpeg options for RTSP streaming via environment variable."""
+        # Use TCP transport with buffer for stable streaming
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+            "rtsp_transport;tcp|"
+            "buffer_size;8192000|"
+            "fflags;discardcorrupt"
+        )
+
+    def _clear_rtsp_options(self):
+        """Clear FFmpeg RTSP options from environment."""
+        if "OPENCV_FFMPEG_CAPTURE_OPTIONS" in os.environ:
+            del os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
+
     def _connect_rtsp(self):
         """Connect to an RTSP stream."""
         url = self.rtsp_var.get().strip()
@@ -539,6 +554,9 @@ class LiveViewerPanel(ttk.Frame):
                 fg=COLORS["text_secondary"],
             )
             self.update_idletasks()
+
+            # Set FFmpeg options for TCP transport
+            self._set_rtsp_options()
 
             # Connect to RTSP stream
             self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
@@ -604,6 +622,7 @@ class LiveViewerPanel(ttk.Frame):
     def _disconnect_rtsp(self):
         """Disconnect from RTSP stream."""
         self._stop_video()
+        self._clear_rtsp_options()
         self.is_rtsp_mode = False
         self.rtsp_url = None
         self.rtsp_reconnect_attempts = 0
@@ -845,6 +864,7 @@ class LiveViewerPanel(ttk.Frame):
     def destroy(self):
         """Clean up resources."""
         self._stop_video()
+        self._clear_rtsp_options()
         if self.visualizer:
             self.visualizer.cleanup()
         self._reset_pipeline()

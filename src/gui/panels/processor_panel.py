@@ -129,6 +129,18 @@ class ProcessorPanel(ttk.Frame):
             style="Modern.TCheckbutton",
         ).pack(side="left", padx=(20, 10))
 
+        # Inference resolution dropdown
+        ttk.Label(options_row, text="Res:", style="Body.TLabel").pack(side="left", padx=(10, 5))
+        self.inference_res_var = tk.StringVar(value="640px max")
+        res_combo = ttk.Combobox(
+            options_row,
+            textvariable=self.inference_res_var,
+            values=["320px max", "480px max", "640px max", "720px max", "960px max", "1080px max", "Original"],
+            width=10,
+            state="readonly",
+        )
+        res_combo.pack(side="left")
+
         # Action buttons row
         action_row = ttk.Frame(settings_inner, style="CardInner.TFrame")
         action_row.pack(fill="x", pady=10)
@@ -358,8 +370,20 @@ class ProcessorPanel(ttk.Frame):
             # Initialize components
             use_cloud = self.use_cloud_var.get()
             mode = "cloud GPU" if use_cloud else "local CPU"
-            self.output_queue.put(("info", f"Initializing detector ({mode})..."))
-            detector = VehicleDetector(detection, zone_config=zone, use_cloud=use_cloud)
+
+            # Parse inference resolution (format: "640px max" or "Original")
+            res_str = self.inference_res_var.get()
+            if res_str == "Original":
+                max_inference_dim = None
+                res_display = "original"
+            else:
+                max_inference_dim = int(res_str.split("px")[0])
+                res_display = f"{max_inference_dim}px"
+
+            self.output_queue.put(("info", f"Initializing detector ({mode}, {res_display})..."))
+            detector = VehicleDetector(
+                detection, zone_config=zone, use_cloud=use_cloud, max_inference_dim=max_inference_dim
+            )
 
             self.output_queue.put(("info", "Initializing tracker..."))
             tracker = VehicleTracker(

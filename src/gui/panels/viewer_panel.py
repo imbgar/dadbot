@@ -404,8 +404,24 @@ class LiveViewerPanel(ttk.Frame):
             command=self._on_cloud_toggle,
             style="Modern.TCheckbutton",
         )
-        self.cloud_inference_cb.pack(anchor="w", pady=(2, 10))
+        self.cloud_inference_cb.pack(anchor="w", pady=2)
         self._detection_controls.append(self.cloud_inference_cb)
+
+        # Inference resolution dropdown
+        res_frame = ttk.Frame(inner, style="CardInner.TFrame")
+        res_frame.pack(anchor="w", pady=(5, 10))
+
+        ttk.Label(res_frame, text="Inference Res:", style="Body.TLabel").pack(side="left")
+        self.inference_res_var = tk.StringVar(value="640px max")
+        res_combo = ttk.Combobox(
+            res_frame,
+            textvariable=self.inference_res_var,
+            values=["320px max", "480px max", "640px max", "720px max", "960px max", "1080px max", "Original"],
+            width=10,
+            state="readonly",
+        )
+        res_combo.pack(side="left", padx=(5, 0))
+        self._detection_controls.append(res_combo)
 
         # Hint about modes
         self.mode_hint_label = tk.Label(
@@ -510,10 +526,18 @@ class LiveViewerPanel(ttk.Frame):
             detection_cfg, calibration_cfg, tracking_cfg, vis_cfg, zone_cfg = self._settings_to_configs()
 
             # Initialize detector (use cloud GPU or local CPU)
+            # Parse inference resolution (format: "640px max" or "Original")
+            res_str = self.inference_res_var.get()
+            if res_str == "Original":
+                max_inference_dim = None
+            else:
+                max_inference_dim = int(res_str.split("px")[0])
+
             self.detector = VehicleDetector(
                 config=detection_cfg,
                 zone_config=zone_cfg,
                 use_cloud=self.settings.detection.use_cloud_inference,
+                max_inference_dim=max_inference_dim,
             )
 
             # Initialize tracker

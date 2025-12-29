@@ -54,6 +54,7 @@ class VehicleDetector:
         config: DetectionConfig | None = None,
         zone_config: ZoneConfig | None = None,
         use_cloud: bool = True,
+        max_inference_dim: int | None = 640,
     ):
         """Initialize the detector with configuration.
 
@@ -61,10 +62,12 @@ class VehicleDetector:
             config: Detection configuration. Uses defaults if not provided.
             zone_config: Road zone configuration for spatial filtering.
             use_cloud: If True, use Roboflow cloud GPU. If False, use local inference.
+            max_inference_dim: Max dimension for inference downscaling. None = original resolution.
         """
         self.config = config or DetectionConfig()
         self.zone_config = zone_config or ZoneConfig()
         self.use_cloud = use_cloud
+        self.max_inference_dim = max_inference_dim
         self._model = None
         self._cloud_client: InferenceHTTPClient | None = None
         self._polygon_zone: sv.PolygonZone | None = None
@@ -72,7 +75,8 @@ class VehicleDetector:
         self._init_zone()
 
         mode = "cloud GPU" if use_cloud else "local"
-        log.info(f"VehicleDetector initialized: model={self.config.model_id}, mode={mode}")
+        res_str = f"{max_inference_dim}px" if max_inference_dim else "original"
+        log.info(f"VehicleDetector initialized: model={self.config.model_id}, mode={mode}, res={res_str}")
         log.debug(f"Detection config: confidence={self.config.confidence_threshold}, "
                   f"iou={self.config.iou_threshold}")
 
@@ -151,27 +155,28 @@ class VehicleDetector:
 
         # Run inference (cloud or local)
         inference_start = time.perf_counter()
+        h, w = frame.shape[:2]
+        max_dim = self.max_inference_dim  # User-configurable resolution
+
+        # Downscale if max_dim is set and frame exceeds it
+        if max_dim is not None and max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            new_w, new_h = int(w * scale), int(h * scale)
+            inference_frame = cv2.resize(frame, (new_w, new_h))
+            needs_scale_back = True
+            log.debug(f"Downscaled {w}x{h} -> {new_w}x{new_h} for inference")
+        else:
+            inference_frame = frame
+            needs_scale_back = False
+
         if self.use_cloud:
-            h, w = frame.shape[:2]
-
-            # Downscale for cloud inference (faster upload, similar accuracy)
-            max_dim = 640  # RF-DETR works well at 640
-            if max(h, w) > max_dim:
-                scale = max_dim / max(h, w)
-                new_w, new_h = int(w * scale), int(h * scale)
-                inference_frame = cv2.resize(frame, (new_w, new_h))
-                log.debug(f"Downscaled {w}x{h} -> {new_w}x{new_h} for cloud")
-            else:
-                inference_frame = frame
-                log.debug(f"Sending {w}x{h} frame to cloud")
-
             results = self.cloud_client.infer(
                 inference_frame,
                 model_id=self.config.model_id,
             )
 
             # Scale bounding boxes back to original resolution
-            if max(h, w) > max_dim:
+            if needs_scale_back:
                 scale_back = max(h, w) / max_dim
                 if isinstance(results, dict) and "predictions" in results:
                     for pred in results["predictions"]:
@@ -180,18 +185,6 @@ class VehicleDetector:
                         pred["width"] *= scale_back
                         pred["height"] *= scale_back
         else:
-            # Local inference - also downscale for faster processing
-            h, w = frame.shape[:2]
-            max_dim = 640  # RF-DETR works well at 640
-            if max(h, w) > max_dim:
-                scale = max_dim / max(h, w)
-                new_w, new_h = int(w * scale), int(h * scale)
-                inference_frame = cv2.resize(frame, (new_w, new_h))
-                log.debug(f"Downscaled {w}x{h} -> {new_w}x{new_h} for local inference")
-            else:
-                inference_frame = frame
-                scale = 1.0
-
             results = self.model.infer(inference_frame, confidence=self.config.confidence_threshold)
 
         inference_time = (time.perf_counter() - inference_start) * 1000
@@ -206,14 +199,11 @@ class VehicleDetector:
 
         # Scale bounding boxes back to original resolution for local inference
         # (cloud inference scaling is handled before from_inference)
-        if not self.use_cloud and len(detections) > 0:
-            h, w = frame.shape[:2]
-            max_dim = 640
-            if max(h, w) > max_dim:
-                scale_back = max(h, w) / max_dim
-                # Scale xyxy boxes back to original resolution
-                detections.xyxy = detections.xyxy * scale_back
-                log.debug(f"Scaled {len(detections)} detections by {scale_back:.2f}x to original resolution")
+        if not self.use_cloud and needs_scale_back and len(detections) > 0:
+            scale_back = max(h, w) / max_dim
+            # Scale xyxy boxes back to original resolution
+            detections.xyxy = detections.xyxy * scale_back
+            log.debug(f"Scaled {len(detections)} detections by {scale_back:.2f}x to original resolution")
 
         # Filter to vehicle classes only (using class names from inference)
         detections, vehicle_classes = self._filter_vehicles(detections)

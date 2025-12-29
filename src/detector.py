@@ -194,24 +194,6 @@ class VehicleDetector:
 
             results = self.model.infer(inference_frame, confidence=self.config.confidence_threshold)
 
-            # Scale bounding boxes back to original resolution
-            if scale < 1.0:
-                scale_back = 1.0 / scale
-                if isinstance(results, list) and len(results) > 0:
-                    result_dict = results[0]
-                    if isinstance(result_dict, dict) and "predictions" in result_dict:
-                        for pred in result_dict["predictions"]:
-                            pred["x"] *= scale_back
-                            pred["y"] *= scale_back
-                            pred["width"] *= scale_back
-                            pred["height"] *= scale_back
-                elif isinstance(results, dict) and "predictions" in results:
-                    for pred in results["predictions"]:
-                        pred["x"] *= scale_back
-                        pred["y"] *= scale_back
-                        pred["width"] *= scale_back
-                        pred["height"] *= scale_back
-
         inference_time = (time.perf_counter() - inference_start) * 1000
 
         # Handle different result formats from inference API
@@ -221,6 +203,17 @@ class VehicleDetector:
         # Convert to supervision Detections
         detections = sv.Detections.from_inference(results)
         raw_count = len(detections)
+
+        # Scale bounding boxes back to original resolution for local inference
+        # (cloud inference scaling is handled before from_inference)
+        if not self.use_cloud and len(detections) > 0:
+            h, w = frame.shape[:2]
+            max_dim = 640
+            if max(h, w) > max_dim:
+                scale_back = max(h, w) / max_dim
+                # Scale xyxy boxes back to original resolution
+                detections.xyxy = detections.xyxy * scale_back
+                log.debug(f"Scaled {len(detections)} detections by {scale_back:.2f}x to original resolution")
 
         # Filter to vehicle classes only (using class names from inference)
         detections, vehicle_classes = self._filter_vehicles(detections)
@@ -241,6 +234,11 @@ class VehicleDetector:
         # Apply road zone filtering if configured
         if len(detections) > 0 and self._polygon_zone is not None:
             pre_zone = len(detections)
+            # Debug: log detection centers before filtering
+            if len(detections) > 0:
+                centers = detections.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
+                log.debug(f"Detection centers before zone filter: {centers[:3]}...")  # First 3
+                log.debug(f"Zone polygon (first 3 points): {self.zone_config.polygon_points[:3]}")
             detections, vehicle_classes = self._filter_by_zone(detections, vehicle_classes)
             if pre_zone != len(detections):
                 log.debug(f"Zone filter reduced detections: {pre_zone} -> {len(detections)}")

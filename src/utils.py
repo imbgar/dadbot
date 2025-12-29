@@ -68,10 +68,10 @@ file_formatter = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# Console formatter - cleaner with timestamp
+# Console formatter - with full timestamp
 console_formatter = logging.Formatter(
     fmt="%(asctime)s │ %(levelname)s │ %(message)s",
-    datefmt="%H:%M:%S",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 # Prevent duplicate handlers if module is reloaded

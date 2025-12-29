@@ -258,7 +258,10 @@ class VehicleDetector:
     def _filter_by_zone(
         self, detections: sv.Detections, vehicle_classes: list[VehicleClass]
     ) -> tuple[sv.Detections, list[VehicleClass]]:
-        """Filter detections to only those within the road zone.
+        """Filter detections to only those with >= 70% overlap with the road zone.
+
+        Uses efficient point sampling to estimate overlap percentage,
+        which helps exclude parked cars that only partially overlap the zone.
 
         Args:
             detections: Vehicle detections.
@@ -270,8 +273,15 @@ class VehicleDetector:
         if self._polygon_zone is None or len(detections) == 0:
             return detections, vehicle_classes
 
-        # Get mask of detections inside the zone
-        zone_mask = self._polygon_zone.trigger(detections)
+        min_overlap = 0.70  # Require 70% of bounding box inside zone
+        polygon = np.array(self.zone_config.polygon_points, dtype=np.float32)
+
+        zone_mask = []
+        for box in detections.xyxy:
+            overlap = self._calculate_box_zone_overlap(box, polygon)
+            zone_mask.append(overlap >= min_overlap)
+
+        zone_mask = np.array(zone_mask)
 
         # Filter detections
         filtered_detections = detections[zone_mask]
@@ -282,6 +292,36 @@ class VehicleDetector:
         ]
 
         return filtered_detections, filtered_classes
+
+    def _calculate_box_zone_overlap(self, box: np.ndarray, polygon: np.ndarray) -> float:
+        """Calculate approximate overlap between bounding box and polygon zone.
+
+        Uses a 3x3 grid of sample points for efficiency (9 point checks).
+
+        Args:
+            box: Bounding box as [x1, y1, x2, y2].
+            polygon: Zone polygon points.
+
+        Returns:
+            Overlap ratio (0.0 to 1.0).
+        """
+        x1, y1, x2, y2 = box
+
+        # Sample 3x3 grid of points within the box (9 points)
+        points_inside = 0
+        total_points = 9
+
+        for i in range(3):
+            for j in range(3):
+                # Calculate sample point (0.25, 0.5, 0.75 along each axis)
+                px = x1 + (x2 - x1) * (0.25 + i * 0.25)
+                py = y1 + (y2 - y1) * (0.25 + j * 0.25)
+
+                # Check if point is inside polygon (>= 0 means inside or on edge)
+                if cv2.pointPolygonTest(polygon, (px, py), False) >= 0:
+                    points_inside += 1
+
+        return points_inside / total_points
 
     def _filter_vehicles(
         self, detections: sv.Detections

@@ -120,6 +120,15 @@ class ProcessorPanel(ttk.Frame):
         )
         fps_combo.pack(side="left")
 
+        # Zone overlay toggle
+        self.show_zone_var = tk.BooleanVar(value=self.settings.visualization.show_zone_overlay)
+        ttk.Checkbutton(
+            options_row,
+            text="Draw Zone",
+            variable=self.show_zone_var,
+            style="Modern.TCheckbutton",
+        ).pack(side="left", padx=(20, 10))
+
         # Action buttons row
         action_row = ttk.Frame(settings_inner, style="CardInner.TFrame")
         action_row.pack(fill="x", pady=10)
@@ -315,7 +324,7 @@ class ProcessorPanel(ttk.Frame):
             zone = ZoneConfig(
                 enabled=self.settings.zone.enabled,
                 polygon_points=self.settings.zone.polygon_points,
-                show_zone=self.settings.visualization.show_zone_overlay,
+                show_zone=self.show_zone_var.get(),
             )
 
             # Note: OpenCV imshow conflicts with tkinter, so disable preview in GUI mode

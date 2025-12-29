@@ -17,6 +17,8 @@ Example:
 import logging
 import sys
 from collections.abc import Callable
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import cv2
@@ -26,6 +28,10 @@ import numpy as np
 # =============================================================================
 # Logging Configuration
 # =============================================================================
+
+# Log directory - use ~/.dadbot/logs/
+LOG_DIR = Path.home() / ".dadbot" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Root logger for the application
 logger = logging.getLogger("dadbot")
@@ -37,13 +43,64 @@ formatter = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+# Shorter formatter for console (less verbose)
+console_formatter = logging.Formatter(
+    fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 # Prevent duplicate handlers if module is reloaded
 if not logger.handlers:
-    # Console handler - outputs to stdout
+    # Console handler - outputs to stdout (INFO level to reduce noise)
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
+
+    # Main log file - all logs (rotating, 5MB max, keep 3 backups)
+    main_log_file = LOG_DIR / "dadbot.log"
+    file_handler = RotatingFileHandler(
+        main_log_file,
+        maxBytes=5 * 1024 * 1024,  # 5MB
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    # Viewer-specific log file for debugging pipeline issues
+    viewer_log_file = LOG_DIR / "viewer.log"
+    viewer_handler = RotatingFileHandler(
+        viewer_log_file,
+        maxBytes=2 * 1024 * 1024,  # 2MB
+        backupCount=2,
+        encoding="utf-8",
+    )
+    viewer_handler.setLevel(logging.DEBUG)
+    viewer_handler.setFormatter(formatter)
+    # Only capture viewer logs
+    viewer_handler.addFilter(lambda record: "viewer" in record.name)
+    logger.addHandler(viewer_handler)
+
+    # Inference-specific log file
+    inference_log_file = LOG_DIR / "inference.log"
+    inference_handler = RotatingFileHandler(
+        inference_log_file,
+        maxBytes=2 * 1024 * 1024,  # 2MB
+        backupCount=2,
+        encoding="utf-8",
+    )
+    inference_handler.setLevel(logging.DEBUG)
+    inference_handler.setFormatter(formatter)
+    # Capture inference-related logs
+    inference_handler.addFilter(
+        lambda record: any(x in record.name.lower() for x in ["inference", "detector", "pipeline"])
+    )
+    logger.addHandler(inference_handler)
+
+    # Log startup info
+    logger.info(f"Logging initialized. Log directory: {LOG_DIR}")
 
 
 def get_logger(name: str) -> logging.Logger:

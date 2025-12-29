@@ -531,6 +531,9 @@ class LiveViewerPanel(ttk.Frame):
                 self._pipeline_queue.get_nowait()
             except queue.Empty:
                 break
+        # Reset display loop flag
+        if hasattr(self, '_display_loop_started'):
+            delattr(self, '_display_loop_started')
 
     def _apply_lens_correction(self, frame: np.ndarray) -> np.ndarray:
         """Apply lens distortion correction if enabled."""
@@ -586,17 +589,39 @@ class LiveViewerPanel(ttk.Frame):
     # InferencePipeline for Real-Time RTSP (runs locally, ~25+ FPS)
     # =========================================================================
 
-    def _on_pipeline_prediction(self, result: dict, frame: VideoFrame) -> None:
+    def _on_pipeline_prediction(self, result, frame) -> None:
         """Callback from InferencePipeline - runs in pipeline thread.
 
         This is called for each frame processed by the pipeline.
         We queue the result for the GUI thread to display.
-        """
-        self._pipeline_fps_monitor.tick()
 
-        # Log first frame received
-        if self.frame_index == 0:
-            log.info(f"First frame received! Shape: {frame.image.shape}")
+        Note: After inference v0.9.18, result and frame can be lists for multi-source pipelines.
+        """
+        # Immediate log to confirm callback is invoked
+        log.debug(f"_on_pipeline_prediction called: result_type={type(result)}, frame_type={type(frame)}")
+
+        try:
+            # Handle list format (v0.9.18+) - extract first item for single-source
+            if isinstance(result, list):
+                result = result[0] if result else {}
+            if isinstance(frame, list):
+                frame = frame[0] if frame else None
+
+            if frame is None:
+                log.warning("Received None frame in prediction callback")
+                return
+
+            self._pipeline_fps_monitor.tick()
+
+            # Log frames periodically
+            if self.frame_index == 0:
+                log.info(f"First frame received! Shape: {frame.image.shape}")
+                log.info(f"Result keys: {result.keys() if isinstance(result, dict) else type(result)}")
+            elif self.frame_index % 100 == 0:
+                log.debug(f"Pipeline processed {self.frame_index} frames, queue size: {self._pipeline_queue.qsize()}")
+        except Exception as e:
+            log.error(f"Error in prediction callback setup: {e}", exc_info=True)
+            return
 
         try:
             # Get the frame image
@@ -704,10 +729,31 @@ class LiveViewerPanel(ttk.Frame):
                     elif "INFERENCE_THREAD_STARTED" in event_type:
                         self.after(0, lambda: self._update_pipeline_status("Inference thread started"))
 
+                # Wrap callback to ensure it works with InferencePipeline threading
+                prediction_callback = self._on_pipeline_prediction
+
+                def on_prediction_wrapper(result, frame):
+                    """Wrapper to ensure callback invocation is logged."""
+                    # Use print as fallback in case logging fails in thread
+                    print(f"[PREDICTION] on_prediction called: result_type={type(result)}, frame_type={type(frame)}")
+                    try:
+                        prediction_callback(result, frame)
+                    except Exception as e:
+                        print(f"[PREDICTION ERROR] {e}")
+                        log.error(f"Exception in prediction callback: {e}", exc_info=True)
+
+                # Also add on_video_frame callback for debugging
+                def on_video_frame_wrapper(frame):
+                    """Debug callback to see if video frames are received."""
+                    print(f"[VIDEO_FRAME] on_video_frame called: frame_type={type(frame)}")
+
+                log.info(f"Creating InferencePipeline with model={model_id}, video={rtsp_url}")
+
                 self._inference_pipeline = InferencePipeline.init(
                     model_id=model_id,
                     video_reference=rtsp_url,
-                    on_prediction=self._on_pipeline_prediction,
+                    on_prediction=on_prediction_wrapper,
+                    on_video_frame=on_video_frame_wrapper,
                     confidence=self.settings.detection.confidence_threshold,
                     iou_threshold=self.settings.detection.iou_threshold,
                     api_key=api_key,
@@ -742,6 +788,8 @@ class LiveViewerPanel(ttk.Frame):
         """Called on GUI thread when pipeline starts successfully."""
         model_id = self.settings.detection.model_id
         log.info(f"Pipeline started ({model_id}), beginning display loop")
+        log.info(f"Pipeline object exists: {self._inference_pipeline is not None}")
+        log.info(f"Running state: {self.running}")
         self.video_info_label.configure(
             text=f"RTSP Stream (InferencePipeline)\nModel: {model_id}\nStatus: Running",
             fg=COLORS["success"],
@@ -834,6 +882,11 @@ class LiveViewerPanel(ttk.Frame):
             log.debug("Display loop stopped: no pipeline")
             return
 
+        # Log first iteration
+        if not hasattr(self, '_display_loop_started'):
+            self._display_loop_started = True
+            log.info("Display loop started, waiting for frames...")
+
         try:
             # Get frame from queue (non-blocking)
             data = self._pipeline_queue.get_nowait()
@@ -842,6 +895,10 @@ class LiveViewerPanel(ttk.Frame):
             tracking_result = data["tracking_result"]
             fps = data["fps"]
             frame_idx = data["frame_index"]
+
+            # Log periodically
+            if frame_idx % 100 == 0:
+                log.debug(f"Display loop got frame {frame_idx}, shape: {frame.shape}")
 
             # Annotate frame if we have tracking results
             if tracking_result and self.visualizer:
@@ -861,6 +918,8 @@ class LiveViewerPanel(ttk.Frame):
         except queue.Empty:
             # No frame available yet - this is normal while waiting
             pass
+        except Exception as e:
+            log.error(f"Display loop error: {e}", exc_info=True)
 
         # Schedule next update (~60 FPS display rate)
         if self.running and self._inference_pipeline is not None:
@@ -873,21 +932,25 @@ class LiveViewerPanel(ttk.Frame):
         canvas_w = self.canvas.winfo_width()
         canvas_h = self.canvas.winfo_height()
 
-        if canvas_w > 1 and canvas_h > 1:
-            h, w = frame.shape[:2]
-            scale = min(canvas_w / w, canvas_h / h, 1.0)
-            new_w, new_h = int(w * scale), int(h * scale)
-            frame = cv2.resize(frame, (new_w, new_h))
+        if canvas_w <= 1 or canvas_h <= 1:
+            log.warning(f"Canvas not ready: {canvas_w}x{canvas_h}")
+            return
 
-            # Convert and display
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            image = Image.fromarray(frame_rgb)
-            self.photo_image = ImageTk.PhotoImage(image)
+        h, w = frame.shape[:2]
+        scale = min(canvas_w / w, canvas_h / h, 1.0)
+        new_w, new_h = int(w * scale), int(h * scale)
+        frame = cv2.resize(frame, (new_w, new_h))
 
-            self.canvas.delete("all")
-            x_offset = (canvas_w - new_w) // 2
-            y_offset = (canvas_h - new_h) // 2
-            self.canvas.create_image(x_offset, y_offset, anchor="nw", image=self.photo_image)
+        # Convert and display
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(frame_rgb)
+        self.photo_image = ImageTk.PhotoImage(image)
+
+        self.canvas.delete("all")
+        x_offset = (canvas_w - new_w) // 2
+        y_offset = (canvas_h - new_h) // 2
+        self.canvas.create_image(x_offset, y_offset, anchor="nw", image=self.photo_image)
+        self.canvas.update_idletasks()
 
     def _load_video(self):
         """Load a video file."""
@@ -1321,6 +1384,7 @@ class LiveViewerPanel(ttk.Frame):
             x_offset = (canvas_w - new_w) // 2
             y_offset = (canvas_h - new_h) // 2
             self.canvas.create_image(x_offset, y_offset, anchor="nw", image=self.photo_image)
+            self.canvas.update_idletasks()
 
         return True
 

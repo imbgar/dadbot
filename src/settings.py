@@ -198,11 +198,12 @@ class AppSettings(BaseModel):
     last_output_path: str | None = None
     last_rtsp_url: str | None = None
 
-    def save(self, path: str | Path) -> None:
+    def save(self, path: str | Path, backup_to_history: bool = True) -> None:
         """Save settings to a YAML file.
 
         Args:
             path: Path to save the settings file.
+            backup_to_history: If True and saving to default path, also save to history.yaml.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +213,12 @@ class AppSettings(BaseModel):
 
         with open(path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+        # Auto-backup to history.yaml when saving main settings
+        if backup_to_history and path == self.get_default_path():
+            history_path = self.get_history_path()
+            with open(history_path, "w") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
     @classmethod
     def load(cls, path: str | Path) -> "AppSettings":
@@ -249,7 +256,7 @@ class AppSettings(BaseModel):
 
         This preserves saved zones, calibrations, lens settings, etc.
         """
-        self.save(self.get_history_path())
+        self.save(self.get_history_path(), backup_to_history=False)
 
     def _to_serializable(self, obj: Any) -> Any:
         """Convert object to YAML-serializable format."""

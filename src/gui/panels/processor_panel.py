@@ -87,9 +87,52 @@ class ProcessorPanel(ttk.Frame):
         output_browse_btn = ttk.Button(output_row, text="Browse", command=self._browse_output)
         output_browse_btn.pack(side="right")
 
+        # Model and inference options row
+        model_row = ttk.Frame(settings_inner, style="CardInner.TFrame")
+        model_row.pack(fill="x", pady=5)
+
+        ttk.Label(model_row, text="Model:", style="Body.TLabel").pack(side="left", padx=(0, 5))
+        self.model_var = tk.StringVar(value=self.settings.detection.model_id)
+        model_combo = ttk.Combobox(
+            model_row,
+            textvariable=self.model_var,
+            values=[
+                "rfdetr-nano",
+                "rfdetr-base",
+                "rfdetr-large",
+                "yolov8n-640",
+                "yolov8s-640",
+                "yolov8m-640",
+            ],
+            width=12,
+            state="readonly",
+        )
+        model_combo.pack(side="left")
+
+        # Inference mode toggle
+        self.use_cloud_var = tk.BooleanVar(value=self.settings.detection.use_cloud_inference)
+        ttk.Checkbutton(
+            model_row,
+            text="Use Cloud GPU",
+            variable=self.use_cloud_var,
+            style="Modern.TCheckbutton",
+        ).pack(side="left", padx=(20, 10))
+
+        # Inference resolution dropdown
+        ttk.Label(model_row, text="Res:", style="Body.TLabel").pack(side="left", padx=(10, 5))
+        self.inference_res_var = tk.StringVar(value="640px max")
+        res_combo = ttk.Combobox(
+            model_row,
+            textvariable=self.inference_res_var,
+            values=["320px max", "480px max", "640px max", "720px max", "960px max", "1080px max", "Original"],
+            width=10,
+            state="readonly",
+        )
+        res_combo.pack(side="left")
+
         # Options row
         options_row = ttk.Frame(settings_inner, style="CardInner.TFrame")
-        options_row.pack(fill="x", pady=10)
+        options_row.pack(fill="x", pady=5)
 
         self.save_video_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
@@ -99,12 +142,12 @@ class ProcessorPanel(ttk.Frame):
             style="Modern.TCheckbutton",
         ).pack(side="left", padx=10)
 
-        # Inference mode toggle
-        self.use_cloud_var = tk.BooleanVar(value=self.settings.detection.use_cloud_inference)
+        # Zone overlay toggle
+        self.show_zone_var = tk.BooleanVar(value=self.settings.visualization.show_zone_overlay)
         ttk.Checkbutton(
             options_row,
-            text="Use Cloud GPU",
-            variable=self.use_cloud_var,
+            text="Draw Zone",
+            variable=self.show_zone_var,
             style="Modern.TCheckbutton",
         ).pack(side="left", padx=10)
 
@@ -119,27 +162,6 @@ class ProcessorPanel(ttk.Frame):
             state="readonly",
         )
         fps_combo.pack(side="left")
-
-        # Zone overlay toggle
-        self.show_zone_var = tk.BooleanVar(value=self.settings.visualization.show_zone_overlay)
-        ttk.Checkbutton(
-            options_row,
-            text="Draw Zone",
-            variable=self.show_zone_var,
-            style="Modern.TCheckbutton",
-        ).pack(side="left", padx=(20, 10))
-
-        # Inference resolution dropdown
-        ttk.Label(options_row, text="Res:", style="Body.TLabel").pack(side="left", padx=(10, 5))
-        self.inference_res_var = tk.StringVar(value="640px max")
-        res_combo = ttk.Combobox(
-            options_row,
-            textvariable=self.inference_res_var,
-            values=["320px max", "480px max", "640px max", "720px max", "960px max", "1080px max", "Original"],
-            width=10,
-            state="readonly",
-        )
-        res_combo.pack(side="left")
 
         # Action buttons row
         action_row = ttk.Frame(settings_inner, style="CardInner.TFrame")
@@ -295,6 +317,7 @@ class ProcessorPanel(ttk.Frame):
             from src.config import (
                 CalibrationConfig,
                 DetectionConfig,
+                LensCorrector,
                 ReportingConfig,
                 TrackingConfig,
                 VisualizationConfig,
@@ -321,7 +344,7 @@ class ProcessorPanel(ttk.Frame):
 
             detection = DetectionConfig(
                 roboflow_api_key=api_key,
-                model_id=self.settings.detection.model_id,
+                model_id=self.model_var.get(),
                 confidence_threshold=self.settings.detection.confidence_threshold,
             )
 
@@ -380,16 +403,32 @@ class ProcessorPanel(ttk.Frame):
                 max_inference_dim = int(res_str.split("px")[0])
                 res_display = f"{max_inference_dim}px"
 
-            self.output_queue.put(("info", f"Initializing detector ({mode}, {res_display})..."))
+            model_name = self.model_var.get()
+            self.output_queue.put(("info", f"Initializing detector: {model_name} ({mode}, {res_display})"))
             detector = VehicleDetector(
                 detection, zone_config=zone, use_cloud=use_cloud, max_inference_dim=max_inference_dim
             )
+
+            # Create lens corrector for accurate speed calculations
+            lens_corrector = None
+            if self.settings.lens.enabled:
+                lens_corrector = LensCorrector(
+                    k1=self.settings.lens.distortion_k1,
+                    k2=self.settings.lens.distortion_k2,
+                    frame_width=video_info.width,
+                    frame_height=video_info.height,
+                    center_x=self.settings.lens.center_x,
+                    center_y=self.settings.lens.center_y,
+                )
+                if lens_corrector.enabled:
+                    self.output_queue.put(("info", f"Lens correction: k1={self.settings.lens.distortion_k1:.6f}, k2={self.settings.lens.distortion_k2:.6f}"))
 
             self.output_queue.put(("info", "Initializing tracker..."))
             tracker = VehicleTracker(
                 calibration_config=calibration,
                 tracking_config=tracking,
                 fps=video_info.fps,
+                lens_corrector=lens_corrector,
             )
 
             reporter = TrafficReporter(config=reporting, speed_limit_mph=tracking.speed_limit_mph)

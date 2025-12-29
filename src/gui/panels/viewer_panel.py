@@ -18,6 +18,7 @@ from src.utils import get_logger
 from src.config import (
     CalibrationConfig,
     DetectionConfig,
+    LensCorrector,
     TrackingConfig,
     VisualizationConfig,
     ZoneConfig,
@@ -407,9 +408,33 @@ class LiveViewerPanel(ttk.Frame):
         self.cloud_inference_cb.pack(anchor="w", pady=2)
         self._detection_controls.append(self.cloud_inference_cb)
 
+        # Model selection dropdown
+        model_frame = ttk.Frame(inner, style="CardInner.TFrame")
+        model_frame.pack(anchor="w", pady=(5, 2))
+
+        ttk.Label(model_frame, text="Model:", style="Body.TLabel").pack(side="left")
+        self.model_var = tk.StringVar(value=self.settings.detection.model_id)
+        model_combo = ttk.Combobox(
+            model_frame,
+            textvariable=self.model_var,
+            values=[
+                "rfdetr-nano",
+                "rfdetr-base",
+                "rfdetr-large",
+                "yolov8n-640",
+                "yolov8s-640",
+                "yolov8m-640",
+            ],
+            width=12,
+            state="readonly",
+        )
+        model_combo.pack(side="left", padx=(5, 0))
+        model_combo.bind("<<ComboboxSelected>>", self._on_model_change)
+        self._detection_controls.append(model_combo)
+
         # Inference resolution dropdown
         res_frame = ttk.Frame(inner, style="CardInner.TFrame")
-        res_frame.pack(anchor="w", pady=(5, 10))
+        res_frame.pack(anchor="w", pady=(2, 10))
 
         ttk.Label(res_frame, text="Inference Res:", style="Body.TLabel").pack(side="left")
         self.inference_res_var = tk.StringVar(value="640px max")
@@ -486,7 +511,7 @@ class LiveViewerPanel(ttk.Frame):
     ]:
         """Convert AppSettings to config objects for ML pipeline."""
         detection_config = DetectionConfig(
-            model_id=self.settings.detection.model_id,
+            model_id=self.model_var.get(),
             confidence_threshold=self.settings.detection.confidence_threshold,
             iou_threshold=self.settings.detection.iou_threshold,
         )
@@ -540,11 +565,26 @@ class LiveViewerPanel(ttk.Frame):
                 max_inference_dim=max_inference_dim,
             )
 
+            # Create lens corrector for accurate speed calculations
+            lens_corrector = None
+            if self.settings.lens.enabled and self.video_info:
+                lens_corrector = LensCorrector(
+                    k1=self.settings.lens.distortion_k1,
+                    k2=self.settings.lens.distortion_k2,
+                    frame_width=self.video_info.width,
+                    frame_height=self.video_info.height,
+                    center_x=self.settings.lens.center_x,
+                    center_y=self.settings.lens.center_y,
+                )
+                if lens_corrector.enabled:
+                    log.info(f"Lens correction enabled: k1={self.settings.lens.distortion_k1:.6f}, k2={self.settings.lens.distortion_k2:.6f}")
+
             # Initialize tracker
             self.tracker = VehicleTracker(
                 calibration_config=calibration_cfg,
                 tracking_config=tracking_cfg,
                 fps=fps,
+                lens_corrector=lens_corrector,
             )
 
             # Initialize visualizer
@@ -1513,6 +1553,17 @@ class LiveViewerPanel(ttk.Frame):
         mode = "cloud GPU" if use_cloud else "local CPU"
         log.info(f"Switching to {mode} inference")
         # Reinitialize detector with new setting
+        if self._pipeline_initialized and self.video_info:
+            self._reset_pipeline()
+            self._init_pipeline(self.video_info.fps)
+        self.on_change()
+
+    def _on_model_change(self, event=None):
+        """Handle model selection change."""
+        model_id = self.model_var.get()
+        self.settings.detection.model_id = model_id
+        log.info(f"Switching to model: {model_id}")
+        # Reinitialize detector with new model
         if self._pipeline_initialized and self.video_info:
             self._reset_pipeline()
             self._init_pipeline(self.video_info.fps)

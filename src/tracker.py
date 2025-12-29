@@ -18,6 +18,7 @@ from collections import deque
 from src.config import (
     CalibrationConfig,
     Direction,
+    LensCorrector,
     SpecialVehicleType,
     TrackingConfig,
     VehicleClass,
@@ -112,6 +113,7 @@ class VehicleTracker:
         calibration_config: CalibrationConfig | None = None,
         tracking_config: TrackingConfig | None = None,
         fps: float = 30.0,
+        lens_corrector: LensCorrector | None = None,
     ):
         """Initialize the tracker.
 
@@ -119,10 +121,12 @@ class VehicleTracker:
             calibration_config: Calibration settings for pixel-to-feet conversion.
             tracking_config: Tracking behavior settings.
             fps: Video frame rate for time calculations.
+            lens_corrector: Optional lens distortion corrector for accurate speed calculations.
         """
         self.calibration = calibration_config or CalibrationConfig()
         self.config = tracking_config or TrackingConfig()
         self.fps = fps
+        self.lens_corrector = lens_corrector
 
         # Initialize ByteTrack
         self.byte_track = sv.ByteTrack(
@@ -135,15 +139,16 @@ class VehicleTracker:
         # Track history: tracker_id -> TrackedVehicle
         self.tracked_vehicles: dict[int, TrackedVehicle] = {}
 
-        # Position history for speed calculation (X coordinates)
-        self.position_history: dict[int, Deque[tuple[float, int]]] = defaultdict(
+        # Position history for speed calculation: (x, y, frame_index)
+        self.position_history: dict[int, Deque[tuple[float, float, int]]] = defaultdict(
             lambda: deque(maxlen=int(fps * 2))  # 2 seconds of history
         )
 
         # Vehicle class mapping from last detection
         self._last_vehicle_classes: dict[int, VehicleClass] = {}
 
-        log.info(f"VehicleTracker initialized: fps={fps}, buffer={self.config.track_buffer}")
+        log.info(f"VehicleTracker initialized: fps={fps}, buffer={self.config.track_buffer}, "
+                 f"lens_correction={'enabled' if lens_corrector and lens_corrector.enabled else 'disabled'}")
         log.debug(f"Calibration: {self.calibration.pixels_per_foot:.2f} px/ft, "
                   f"speed limit={self.config.speed_limit_mph} mph")
 
@@ -231,8 +236,8 @@ class VehicleTracker:
             vehicle.bbox_height_pixels = bbox_height
             vehicle.current_bbox = (bbox[0], bbox[1], bbox[2], bbox[3])
 
-            # Store position with frame index for speed calculation
-            self.position_history[tracker_id].append((x, frame_index))
+            # Store position with frame index for speed calculation (x, y, frame_index)
+            self.position_history[tracker_id].append((x, y, frame_index))
 
             # Determine direction FIRST (needed for speed calc context)
             self._determine_direction(vehicle)
@@ -248,6 +253,7 @@ class VehicleTracker:
 
         For side-view footage, speed is calculated from X-axis movement:
         - Get positions from recent history
+        - Apply lens distortion correction if available
         - Convert pixel distance to feet using calibration
         - Calculate speed in MPH
 
@@ -260,12 +266,19 @@ class VehicleTracker:
         if len(history) < self.config.min_frames_for_speed:
             return
 
-        # Get oldest and newest positions from history
-        oldest_x, oldest_frame = history[0]
-        newest_x, newest_frame = history[-1]
+        # Get oldest and newest positions from history (x, y, frame_index)
+        oldest_x, oldest_y, oldest_frame = history[0]
+        newest_x, newest_y, newest_frame = history[-1]
 
-        # Calculate pixel distance traveled (X-axis for side view)
-        pixel_distance = abs(newest_x - oldest_x)
+        # Calculate pixel distance traveled
+        if self.lens_corrector and self.lens_corrector.enabled:
+            # Use lens-corrected distance for accurate speed calculation
+            pixel_distance = self.lens_corrector.correct_pixel_distance(
+                oldest_x, oldest_y, newest_x, newest_y
+            )
+        else:
+            # Simple X-axis distance (original behavior for side view)
+            pixel_distance = abs(newest_x - oldest_x)
 
         # Convert pixels to feet using calibration
         feet_distance = pixel_distance / self.calibration.pixels_per_foot

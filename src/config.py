@@ -238,3 +238,118 @@ class AppConfig(BaseSettings):
     def from_env(cls) -> "AppConfig":
         """Load configuration from environment variables."""
         return cls()
+
+
+class LensCorrector:
+    """Coordinate correction for lens distortion.
+
+    This class provides mathematical coordinate transformation to correct
+    for barrel/pincushion distortion without modifying the actual video frames.
+    Use this for accurate speed calculations across the entire frame.
+    """
+
+    def __init__(
+        self,
+        k1: float = 0.0,
+        k2: float = 0.0,
+        frame_width: int = 1920,
+        frame_height: int = 1080,
+        center_x: float | None = None,
+        center_y: float | None = None,
+    ):
+        """Initialize the lens corrector.
+
+        Args:
+            k1: Primary radial distortion coefficient (negative = barrel)
+            k2: Secondary radial distortion coefficient
+            frame_width: Width of the frame in pixels
+            frame_height: Height of the frame in pixels
+            center_x: Distortion center X (defaults to frame center)
+            center_y: Distortion center Y (defaults to frame center)
+        """
+        self.k1 = k1
+        self.k2 = k2
+        self.frame_width = frame_width
+        self.frame_height = frame_height
+        self.cx = center_x if center_x is not None else frame_width / 2
+        self.cy = center_y if center_y is not None else frame_height / 2
+        self.max_dim = max(frame_width, frame_height)
+
+        # Check if correction is effectively disabled
+        self.enabled = abs(k1) > 1e-6 or abs(k2) > 1e-6
+
+    def undistort_point(self, x: float, y: float) -> tuple[float, float]:
+        """Undistort a single point coordinate.
+
+        Transforms a point from distorted (observed) coordinates to
+        undistorted (true) coordinates.
+
+        Args:
+            x: X coordinate in distorted frame
+            y: Y coordinate in distorted frame
+
+        Returns:
+            Tuple of (undistorted_x, undistorted_y)
+        """
+        if not self.enabled:
+            return x, y
+
+        # Normalize to center
+        xn = (x - self.cx) / self.max_dim
+        yn = (y - self.cy) / self.max_dim
+
+        # Radial distance squared
+        r2 = xn * xn + yn * yn
+        r4 = r2 * r2
+
+        # Distortion factor
+        factor = 1 + self.k1 * r2 + self.k2 * r4
+
+        # Apply correction
+        xu = xn * factor
+        yu = yn * factor
+
+        # Convert back to pixel coordinates
+        return xu * self.max_dim + self.cx, yu * self.max_dim + self.cy
+
+    def undistort_points(self, points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        """Undistort multiple points.
+
+        Args:
+            points: List of (x, y) coordinate tuples
+
+        Returns:
+            List of undistorted (x, y) coordinate tuples
+        """
+        return [self.undistort_point(x, y) for x, y in points]
+
+    def undistort_bbox_center(self, x1: float, y1: float, x2: float, y2: float) -> tuple[float, float]:
+        """Get undistorted center of a bounding box.
+
+        Args:
+            x1, y1: Top-left corner
+            x2, y2: Bottom-right corner
+
+        Returns:
+            Undistorted (center_x, center_y)
+        """
+        cx = (x1 + x2) / 2
+        cy = (y1 + y2) / 2
+        return self.undistort_point(cx, cy)
+
+    def correct_pixel_distance(self, x1: float, y1: float, x2: float, y2: float) -> float:
+        """Calculate the true pixel distance between two points.
+
+        This corrects for lens distortion when measuring distances
+        for speed calculations.
+
+        Args:
+            x1, y1: First point coordinates
+            x2, y2: Second point coordinates
+
+        Returns:
+            Corrected distance in pixels
+        """
+        ux1, uy1 = self.undistort_point(x1, y1)
+        ux2, uy2 = self.undistort_point(x2, y2)
+        return ((ux2 - ux1) ** 2 + (uy2 - uy1) ** 2) ** 0.5

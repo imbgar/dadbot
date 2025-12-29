@@ -57,6 +57,11 @@ class LensCalibrationPanel(ttk.Frame):
 
         self._create_layout()
 
+        # Update points label with loaded count
+        if self.reference_points:
+            self.points_label.configure(text=f"Points: {len(self.reference_points)}")
+            self._update_deviation()
+
     def _create_layout(self):
         """Create the panel layout."""
         # Header
@@ -226,8 +231,8 @@ class LensCalibrationPanel(ttk.Frame):
 
         self.k1_scale = ttk.Scale(
             k1_frame,
-            from_=-0.5,
-            to=0.5,
+            from_=-1.0,
+            to=1.0,
             variable=self.k1_var,
             orient="horizontal",
             command=self._on_k1_change,
@@ -273,8 +278,8 @@ class LensCalibrationPanel(ttk.Frame):
 
         self.k2_scale = ttk.Scale(
             k2_frame,
-            from_=-0.2,
-            to=0.2,
+            from_=-0.5,
+            to=0.5,
             variable=self.k2_var,
             orient="horizontal",
             command=self._on_k2_change,
@@ -338,11 +343,21 @@ class LensCalibrationPanel(ttk.Frame):
         )
         self.deviation_label.pack(anchor="w", pady=(5, 0))
 
+        btn_frame = ttk.Frame(inner, style="CardInner.TFrame")
+        btn_frame.pack(fill="x", pady=(10, 0))
+
         ttk.Button(
-            inner,
+            btn_frame,
             text="Clear Points",
             command=self._clear_points,
-        ).pack(fill="x", pady=(10, 0))
+        ).pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        ttk.Button(
+            btn_frame,
+            text="Calculate k1/k2",
+            command=self._calculate_distortion,
+            style="Accent.TButton",
+        ).pack(side="left", fill="x", expand=True)
 
     def _create_actions_section(self, parent):
         """Create actions section."""
@@ -453,6 +468,7 @@ class LensCalibrationPanel(ttk.Frame):
         self._map2 = None
 
         self._update_display()
+        self._update_deviation()
 
     def _on_k2_change(self, value):
         """Handle k2 slider change."""
@@ -467,6 +483,7 @@ class LensCalibrationPanel(ttk.Frame):
         self._map2 = None
 
         self._update_display()
+        self._update_deviation()
 
     def _on_canvas_click(self, event):
         """Handle canvas click to add reference point."""
@@ -504,14 +521,140 @@ class LensCalibrationPanel(ttk.Frame):
         self.deviation_label.configure(text="Deviation: --", fg=COLORS["text_muted"])
         self._update_display()
 
+    def _calculate_distortion(self):
+        """Calculate optimal k1/k2 from reference points using optimization.
+
+        Uses OpenCV's undistortPoints for consistency with the preview display.
+        """
+        if len(self.reference_points) < 3:
+            if self.on_status:
+                self.on_status("Need at least 3 reference points to calculate distortion")
+            return
+
+        if self.original_frame is None:
+            if self.on_status:
+                self.on_status("Load a video first to calculate distortion")
+            return
+
+        from scipy.optimize import minimize
+
+        h, w = self.original_frame.shape[:2]
+        cx = self.settings.lens.center_x if self.settings.lens.center_x else w / 2
+        cy = self.settings.lens.center_y if self.settings.lens.center_y else h / 2
+        fx = fy = max(w, h)
+
+        # Build camera matrix
+        camera_matrix = np.array([
+            [fx, 0, cx],
+            [0, fy, cy],
+            [0, 0, 1]
+        ], dtype=np.float32)
+
+        points = np.array(self.reference_points, dtype=np.float32).reshape(-1, 1, 2)
+
+        def undistort_with_opencv(k1, k2):
+            """Undistort points using OpenCV (same as preview)."""
+            dist_coeffs = np.array([k1, k2, 0, 0, 0], dtype=np.float32)
+            undistorted = cv2.undistortPoints(points, camera_matrix, dist_coeffs, P=camera_matrix)
+            return undistorted.reshape(-1, 2)
+
+        def deviation_from_line(params):
+            """Objective: minimize deviation from straight line after undistortion."""
+            k1, k2 = params
+            try:
+                undistorted = undistort_with_opencv(k1, k2)
+
+                # Fit line to undistorted points
+                vx, vy, x0, y0 = cv2.fitLine(undistorted.astype(np.float32), cv2.DIST_L2, 0, 0.01, 0.01)
+
+                # Calculate sum of squared perpendicular distances
+                total_dist = 0
+                for px, py in undistorted:
+                    t = vx[0] * (px - x0[0]) + vy[0] * (py - y0[0])
+                    closest_x = x0[0] + t * vx[0]
+                    closest_y = y0[0] + t * vy[0]
+                    total_dist += (px - closest_x)**2 + (py - closest_y)**2
+
+                return total_dist
+            except Exception:
+                return 1e10  # Return large value on error
+
+        # Try multiple starting points to avoid local minima
+        best_result = None
+        best_cost = float('inf')
+
+        # Starting points: current values, zero, and a few common correction values
+        starting_points = [
+            (self.k1_var.get(), self.k2_var.get()),
+            (0.0, 0.0),
+            (-0.3, 0.0),  # Common barrel distortion correction
+            (0.3, 0.0),   # Common pincushion distortion correction
+            (-0.5, 0.1),
+            (0.5, -0.1),
+        ]
+
+        if self.on_status:
+            self.on_status("Calculating optimal distortion coefficients...")
+
+        for k1_init, k2_init in starting_points:
+            result = minimize(
+                deviation_from_line,
+                [k1_init, k2_init],
+                method='Nelder-Mead',
+                options={'xatol': 1e-5, 'fatol': 0.1, 'maxiter': 1000}
+            )
+
+            if result.fun < best_cost:
+                best_cost = result.fun
+                best_result = result
+
+        if best_result is not None and best_result.fun < 1e9:
+            k1_opt, k2_opt = best_result.x
+            # Clamp to slider ranges
+            k1_opt = max(-1.0, min(1.0, k1_opt))
+            k2_opt = max(-0.5, min(0.5, k2_opt))
+
+            # Clear cached maps to force recalculation
+            self._map1 = None
+            self._map2 = None
+
+            # Update sliders
+            self.k1_var.set(k1_opt)
+            self.k2_var.set(k2_opt)
+            self.k1_label.configure(text=f"{k1_opt:.3f}")
+            self.k2_label.configure(text=f"{k2_opt:.3f}")
+
+            # Update display and settings
+            self.settings.lens.distortion_k1 = k1_opt
+            self.settings.lens.distortion_k2 = k2_opt
+            self.settings.lens.camera_preset = "custom"
+            self.preset_var.set("custom")
+            self._update_display()
+            self._update_deviation()
+            self.on_change()
+
+            if self.on_status:
+                self.on_status(f"Calculated: k1={k1_opt:.4f}, k2={k2_opt:.4f}")
+        else:
+            if self.on_status:
+                self.on_status("Optimization failed - try adding more points along a longer line")
+
     def _update_deviation(self):
-        """Calculate and display deviation from straight line."""
+        """Calculate and display deviation from straight line after undistortion."""
         if len(self.reference_points) < 3:
             self.deviation_label.configure(text="Deviation: --", fg=COLORS["text_muted"])
             return
 
-        # Calculate deviation from best-fit line
-        points = np.array(self.reference_points, dtype=np.float32)
+        # Use undistorted points if correction is enabled
+        k1 = self.k1_var.get()
+        k2 = self.k2_var.get()
+
+        if self.original_frame is not None and (k1 != 0 or k2 != 0):
+            # Transform points using current distortion settings
+            transformed = self._transform_points(self.reference_points)
+            points = np.array(transformed, dtype=np.float32)
+        else:
+            points = np.array(self.reference_points, dtype=np.float32)
 
         # Fit line using least squares
         if len(points) >= 2:
@@ -527,7 +670,6 @@ class LensCalibrationPanel(ttk.Frame):
                 dist = np.sqrt((px - closest_x)**2 + (py - closest_y)**2)
                 distances.append(dist)
 
-            avg_deviation = np.mean(distances)
             max_deviation = np.max(distances)
 
             # Color code based on deviation
@@ -544,8 +686,10 @@ class LensCalibrationPanel(ttk.Frame):
                 color = COLORS["error"]
                 status = "Poor"
 
+            # Show whether this is raw or corrected deviation
+            label_prefix = "Corrected" if (k1 != 0 or k2 != 0) else "Raw"
             self.deviation_label.configure(
-                text=f"Deviation: {max_deviation:.1f}px ({status})",
+                text=f"{label_prefix}: {max_deviation:.1f}px ({status})",
                 fg=color,
             )
 

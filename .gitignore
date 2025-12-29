@@ -71,3 +71,5 @@ config/settings.yaml
 # logs
 
 /logs
+
+/rtsp_viewer

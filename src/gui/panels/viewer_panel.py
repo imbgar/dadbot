@@ -730,21 +730,22 @@ class LiveViewerPanel(ttk.Frame):
                 log.warning("Received None frame in prediction callback")
                 return
 
-            self._pipeline_fps_monitor.tick()
 
-            # Log frames periodically
-            if self.frame_index == 0:
-                log.info(f"First frame received! Shape: {frame.image.shape}")
-                log.info(f"Result keys: {result.keys() if isinstance(result, dict) else type(result)}")
-            elif self.frame_index % 100 == 0:
-                log.debug(f"Pipeline processed {self.frame_index} frames, queue size: {self._pipeline_queue.qsize()}")
+            self._pipeline_fps_monitor.tick()
         except Exception as e:
             log.error(f"Error in prediction callback setup: {e}", exc_info=True)
             return
 
         try:
-            # Get the frame image
-            image = frame.image.copy()
+            # Get the frame image - handle both VideoFrame objects and raw numpy arrays
+            if hasattr(frame, 'image'):
+                image = frame.image.copy()
+            elif isinstance(frame, np.ndarray):
+                image = frame.copy()
+            else:
+                log.error(f"[CALLBACK] Unknown frame type: {type(frame)}")
+                return
+
 
             # NOTE: Lens correction is NOT applied here to keep coordinates consistent
             # with zone polygon. The InferencePipeline already ran detection on the
@@ -806,7 +807,7 @@ class LiveViewerPanel(ttk.Frame):
             self.frame_index += 1
 
         except Exception as e:
-            log.error(f"Pipeline prediction error: {e}")
+            log.error(f"Pipeline prediction error: {e}", exc_info=True)
 
     def _start_inference_pipeline_async(self, rtsp_url: str) -> None:
         """Start the InferencePipeline in a background thread (non-blocking).
@@ -836,15 +837,16 @@ class LiveViewerPanel(ttk.Frame):
                     log.info(f"Downloading model {model_id} (first run)...")
                     self.after(0, lambda: self._update_pipeline_status("Downloading model (first run)..."))
 
-                # Status handler to track pipeline events
+                # Status handler to track pipeline events (minimal logging for performance)
                 def on_status_update(status):
                     event_type = status.event_type
                     payload = status.payload
-                    # Only log errors and key events, not every frame
-                    if "ERROR" in event_type or "STARTED" in event_type or "STOPPED" in event_type:
-                        log.info(f"Pipeline event: {event_type} | {payload}")
-                    else:
-                        log.debug(f"Pipeline event: {event_type}")
+                    # Only log errors and key lifecycle events
+                    if "ERROR" in event_type:
+                        log.error(f"Pipeline error: {event_type} | {payload}")
+                    elif event_type in ("INFERENCE_THREAD_STARTED", "VIDEO_CONSUMPTION_STARTED", "VIDEO_CONSUMPTION_FINISHED"):
+                        log.info(f"Pipeline: {event_type}")
+                    # Skip logging FRAME_CAPTURED, FRAME_CONSUMED, INFERENCE_COMPLETED etc.
 
                     if "ERROR" in event_type:
                         error_msg = payload.get("error", "Unknown error")
@@ -864,7 +866,12 @@ class LiveViewerPanel(ttk.Frame):
                     except Exception as e:
                         log.error(f"Exception in prediction callback: {e}", exc_info=True)
 
-                log.info(f"Creating InferencePipeline with model={model_id}, video={rtsp_url}")
+                # Get inference FPS limit - always limit to prevent overwhelming the system
+                max_fps = self.settings.detection.max_inference_fps
+                if max_fps >= 999:  # "All" option
+                    max_fps = 30  # Cap at 30 FPS to prevent system overload
+
+                log.info(f"Creating InferencePipeline with model={model_id}, video={rtsp_url}, max_fps={max_fps}")
 
                 self._inference_pipeline = InferencePipeline.init(
                     model_id=model_id,
@@ -874,15 +881,25 @@ class LiveViewerPanel(ttk.Frame):
                     iou_threshold=self.settings.detection.iou_threshold,
                     api_key=api_key,
                     status_update_handlers=[on_status_update],
+                    max_fps=max_fps,
                 )
 
-                log.debug("Pipeline initialized, starting...")
-                self.after(0, lambda: self._update_pipeline_status("Starting inference..."))
-                self._inference_pipeline.start()
-                log.info("InferencePipeline running")
+                log.info("Pipeline initialized, scheduling display loop...")
 
-                # Notify GUI thread that pipeline is ready
-                self.after(0, self._on_pipeline_started)
+                # IMPORTANT: Notify GUI thread BEFORE start() because start() blocks!
+                # start() runs the pipeline's main loop and only returns when terminated.
+                # Use after_idle to ensure it runs on the main thread's event loop
+                try:
+                    self.after(0, lambda: self._update_pipeline_status("Starting inference..."))
+                    self.after(100, self._on_pipeline_started)  # Small delay to ensure pipeline is ready
+                    log.info("Display loop scheduled via self.after()")
+                except Exception as e:
+                    log.error(f"Failed to schedule display loop: {e}", exc_info=True)
+
+                # This blocks until pipeline.terminate() is called
+                log.info("Calling pipeline.start() - this will block...")
+                self._inference_pipeline.start()
+                log.info("InferencePipeline terminated")
 
             except Exception as e:
                 log.error(f"Pipeline init failed: {e}", exc_info=True)
@@ -1002,19 +1019,20 @@ class LiveViewerPanel(ttk.Frame):
         if not hasattr(self, '_display_loop_started'):
             self._display_loop_started = True
             log.info("Display loop started, waiting for frames...")
+            self._display_loop_empty_count = 0
 
         try:
             # Get frame from queue (non-blocking)
             data = self._pipeline_queue.get_nowait()
+
+            # Reset empty count on successful get
+            self._display_loop_empty_count = 0
 
             frame = data["frame"]
             tracking_result = data["tracking_result"]
             fps = data["fps"]
             frame_idx = data["frame_index"]
 
-            # Log periodically
-            if frame_idx % 100 == 0:
-                log.debug(f"Display loop got frame {frame_idx}, shape: {frame.shape}")
 
             # Annotate frame if we have tracking results
             if tracking_result and self.visualizer:
@@ -1032,14 +1050,14 @@ class LiveViewerPanel(ttk.Frame):
             self._display_frame(frame)
 
         except queue.Empty:
-            # No frame available yet - this is normal while waiting
+            # No frame available yet - normal while waiting for inference
             pass
         except Exception as e:
             log.error(f"Display loop error: {e}", exc_info=True)
 
-        # Schedule next update (~60 FPS display rate)
+        # Schedule next update (~30 FPS display rate to reduce CPU load)
         if self.running and self._inference_pipeline is not None:
-            self.after(16, self._pipeline_display_loop)
+            self.after(33, self._pipeline_display_loop)
         else:
             log.debug("Display loop ending")
 
@@ -1066,7 +1084,7 @@ class LiveViewerPanel(ttk.Frame):
         x_offset = (canvas_w - new_w) // 2
         y_offset = (canvas_h - new_h) // 2
         self.canvas.create_image(x_offset, y_offset, anchor="nw", image=self.photo_image)
-        self.canvas.update_idletasks()
+        # Note: Removed update_idletasks() - it can cause re-entrancy issues with after() callbacks
 
     def _load_video(self):
         """Load a video file."""

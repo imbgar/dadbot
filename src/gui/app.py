@@ -400,23 +400,40 @@ class DadBotApp:
 
     def _setup_gui_logging(self):
         """Set up the GUI log handler to display logs in the console panel."""
-        def on_log_message(msg: str):
-            # Determine tag based on log level
-            tag = "info"
+        def get_tag(msg: str) -> str:
+            """Determine tag based on log level."""
             if "[ERROR]" in msg:
-                tag = "error"
+                return "error"
             elif "[WARNING]" in msg:
-                tag = "warning"
+                return "warning"
             elif "[DEBUG]" in msg:
-                tag = "muted"
+                return "muted"
+            return "info"
 
-            # Schedule write on main thread to avoid Tkinter threading issues
+        def on_log_message(msg: str):
+            # This is called directly only from main thread
+            # (non-main thread messages are queued)
             try:
-                self.root.after(0, lambda: self.console_output.writeln(msg, tag))
+                tag = get_tag(msg)
+                self.console_output.writeln(msg, tag)
             except Exception:
                 pass  # Ignore if widget is destroyed
 
         self._gui_log_handler = add_gui_handler(on_log_message)
+
+        # Poll for queued log messages from non-main threads
+        def poll_log_queue():
+            if self._gui_log_handler:
+                for msg in self._gui_log_handler.get_queued_messages():
+                    try:
+                        tag = get_tag(msg)
+                        self.console_output.writeln(msg, tag)
+                    except Exception:
+                        pass
+            # Continue polling
+            self.root.after(100, poll_log_queue)
+
+        poll_log_queue()
 
     def _cleanup_logging(self):
         """Clean up the GUI log handler."""

@@ -1,0 +1,166 @@
+{
+    "meta": {
+        "title": "Premium Trial",
+        "icon": "far fa-gift",
+        "support": "Priority Support",
+        "visibleOnPricingTable": false,
+        "tagline": "For startups",
+        "description": "For teams looking to test premium features while building and deploying models."
+    },
+    "threshold": 100,
+    "soft": false,
+    "coreml": {
+        "limit": 1,
+        "mau": 0
+    },
+    "workspace": {
+        "plan": "enterprise",
+        "team": true,
+        "isSetup": true
+    },
+    "oak": {
+        "mau": 0,
+        "limit": 1
+    },
+    "train": {
+        "canTrainNewRFDETR": false,
+        "used": 0,
+        "canTrainSam3": false,
+        "quota": 3,
+        "rollover": false,
+        "day": 1,
+        "canTrainNas": false,
+        "canTrainAllModels": false,
+        "canTrainExtraLarge": false,
+        "modelLicense": 0,
+        "accurate": true,
+        "pt": false,
+        "reload": 0
+    },
+    "billing": false,
+    "restricted": false,
+    "inference": {
+        "billing_period": "monthly",
+        "last_billed_on": null,
+        "used": 296,
+        "replenish_after_billing": true,
+        "quota": 1000,
+        "currentMonth": "december",
+        "soft": false
+    },
+    "features": {
+        "billSelfHostedDeployments": false,
+        "externalModelManagement": false,
+        "deviceManagerV2": true,
+        "disableAutoInstantModelTraining": false,
+        "creditSystem": true,
+        "tfjsInBrowser": "dev_only",
+        "ignoreFirstFailedInvoicePaymentDate": false,
+        "workflowBlockControls": false,
+        "useProjectFoldersForWorkflows": false,
+        "highComplexitySmartPoly": false,
+        "workspaceInsights": false,
+        "accessLogs": false,
+        "advancedApiKeys": false,
+        "emailUpload": true,
+        "userMetadata": false,
+        "annotationReview": false,
+        "allowCustomConfigDedicatedDeployments": false,
+        "manage_workflows": false,
+        "healthCheck": false,
+        "uiUploadWithBackend": false,
+        "unrestrictedEmailProxy": false,
+        "folderBilling": false,
+        "activeLearningDefaultEnabled": false,
+        "manageSourceVideo": true,
+        "modelMonitoring": false,
+        "apiUpload": true,
+        "imageLibrary": false,
+        "bucketMirroring": false,
+        "embedInMobileApps": false,
+        "supportLevel": "None",
+        "trtOnDemandCompilation": false,
+        "hipaaCompliance": false,
+        "refreshAnnotationsButton": false,
+        "canDisablePublicProjects": false,
+        "allowPrivateProjects": true,
+        "deviceMonitoring": false,
+        "modelEvaluation": true,
+        "edgeInference": "forbidden",
+        "advancedTransforms": false,
+        "folderPermissions": false,
+        "sessionRecording": false,
+        "allowCustomPythonDedicatedDeployments": true,
+        "filterByTags": false,
+        "rbac": false,
+        "batchProcessing": false,
+        "outsourcedAnnotations": false,
+        "offlineMode": false,
+        "videoProcessing": true,
+        "activeLearning": false,
+        "advancedLabelAssist": false,
+        "cloudMlIntegrations": false,
+        "classAttributes": true,
+        "clipSearch": false,
+        "exportVersion": false,
+        "vpcDeployment": false,
+        "modelEvaluationTrainSet": false,
+        "unlimitedTimeDedicatedDeployments": false,
+        "allowMultipleTrials": false
+    },
+    "plan": "enterprise",
+    "limit": {
+        "dedicatedDeployments": null,
+        "variantsPerImage": 3,
+        "transforms": 5000,
+        "projects": 3,
+        "collaborators": 3,
+        "sources": 1000,
+        "soft": false
+    },
+    "trial": {
+        "isTrial": false,
+        "startDate": "11 Dec 2025 09:32 AM (local)",
+        "expired": "25 Dec 2025 10:00 AM (local)",
+        "endDate": "25 Dec 2025 09:32 AM (local)",
+        "endOfTrialHandled": false
+    },
+    "pro": false,
+    "ubp": {
+        "creditCap": -1,
+        "includedCredits": 100,
+        "pricePerCredit": 3
+    },
+    "tfjs": {
+        "limit": 1000,
+        "mau": 0
+    },
+    "fish": false,
+    "video_inference": {
+        "quota": 5,
+        "used": 0
+    },
+    "price": {
+        "monthly": 399,
+        "annual": 299
+    },
+    "tensorrt": {
+        "mau": 1,
+        "limit": 5
+    },
+    "auto_label": {
+        "monthly_quota": 1000,
+        "purchased_used": 0,
+        "monthly_used": 0,
+        "purchased_credits": 0
+    },
+    "images": {
+        "transforms": 0,
+        "sources": 0
+    },
+    "total": 0,
+    "rates": {
+        "sources": 1000,
+        "transforms": 200
+    }
+}

@@ -67,3 +67,7 @@ config/settings.yaml
 
 # Jupyter
 .ipynb_checkpoints/
+
+# logs
+
+/logs

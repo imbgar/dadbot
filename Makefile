@@ -1,4 +1,4 @@
-.PHONY: install dev test lint format run clean help gui
+.PHONY: install dev test lint format run clean clean-logs clean-output help gui
 
 # Default target
 help:
@@ -10,7 +10,9 @@ help:
 	@echo "  format         - Run ruff format"
 	@echo "  run            - Execute main pipeline"
 	@echo "  gui            - Run the GUI application"
-	@echo "  clean          - Remove artifacts"
+	@echo "  clean          - Remove all artifacts (logs, output, cache)"
+	@echo "  clean-logs     - Remove log files"
+	@echo "  clean-output   - Remove output files"
 
 install:
 	uv sync
@@ -41,9 +43,17 @@ run-video:
 gui:
 	uv run python run_gui.py
 
-clean:
+clean: clean-logs clean-output
 	rm -rf __pycache__ .pytest_cache .ruff_cache
 	rm -rf src/__pycache__ tests/__pycache__
 	rm -rf *.egg-info dist build
 	rm -rf .coverage htmlcov
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+clean-logs:
+	rm -rf logs/
+	@echo "Cleaned logs/"
+
+clean-output:
+	rm -rf output/
+	@echo "Cleaned output/"

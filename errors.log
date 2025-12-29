@@ -1,0 +1,6 @@
+INFO:dadbot.viewer:Pipeline event: INFERENCE_COMPLETED | {'frames_ids': [177], 'frames_timestamps': [datetime.datetime(2025, 12, 29, 10, 29, 34, 234509)], 'sources_id': [0]}
+2025-12-29 10:29:34.499 [INFO] dadbot.viewer: Pipeline event: FRAME_CONSUMED | {'frame_timestamp': datetime.datetime(2025, 12, 29, 10, 29, 34, 432675), 'frame_id': 181, 'source_id': 0}
+INFO:dadbot.viewer:Pipeline event: FRAME_CONSUMED | {'frame_timestamp': datetime.datetime(2025, 12, 29, 10, 29, 34, 432675), 'frame_id': 181, 'source_id': 0}
+2025-12-29 10:29:34.531 [INFO] dadbot.viewer: Pipeline event: FRAME_CAPTURED | {'frame_timestamp': datetime.datetime(2025, 12, 29, 10, 29, 34, 486873), 'frame_id': 182, 'source_id': 0}
+INFO:dadbot.viewer:Pipeline event: FRAME_CAPTURED | {'frame_timestamp': datetime.datetime(2025, 12, 29, 10, 29, 34, 486873), 'frame_id': 182, 'source_id': 0}
+2025-12-29 10:29:34.582 [INFO] dadbot.viewer: Pipeline event: FRAME_CAPTURED | {'frame_timestamp': datetime.datetime(2025, 12, 29, 10, 29, 34, 534801), 'frame_id': 183, 'source_id': 0}

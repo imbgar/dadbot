@@ -15,7 +15,9 @@ Example:
 """
 
 import logging
+import queue
 import sys
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -76,6 +78,10 @@ console_formatter = logging.Formatter(
 
 # Prevent duplicate handlers if module is reloaded
 if not logger.handlers:
+    # Prevent propagation to root logger (which may be configured by other libraries
+    # like 'inference' that call basicConfig and add handlers with default format)
+    logger.propagate = False
+
     # Console handler - outputs to stdout (INFO level to reduce noise)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
@@ -133,6 +139,7 @@ class GUILogHandler(logging.Handler):
     """Custom handler that sends log messages to a GUI callback.
 
     Used to display log messages in the application's console panel.
+    Thread-safe: uses a queue to avoid calling Tkinter from non-main threads.
     """
 
     def __init__(self, callback: Callable[[str], None]):
@@ -144,15 +151,36 @@ class GUILogHandler(logging.Handler):
         super().__init__()
         self.callback = callback
         self.setFormatter(console_formatter)
+        self._queue: "queue.Queue[str]" = queue.Queue()
+        self._main_thread_id = threading.current_thread().ident
 
     def emit(self, record: logging.LogRecord) -> None:
         """Emit a log record by calling the callback with formatted message."""
         try:
             msg = self.format(record)
-            self.callback(msg)
+            # Only call callback directly from main thread
+            # From other threads, queue the message (it will be picked up by GUI polling)
+            if threading.current_thread().ident == self._main_thread_id:
+                self.callback(msg)
+            else:
+                # Queue the message - the GUI will poll this
+                try:
+                    self._queue.put_nowait(msg)
+                except queue.Full:
+                    pass  # Drop message if queue is full
         except Exception:
             # Silently ignore errors to prevent logging loops
             pass
+
+    def get_queued_messages(self) -> list:
+        """Get all queued messages (called from main thread)."""
+        messages = []
+        while True:
+            try:
+                messages.append(self._queue.get_nowait())
+            except queue.Empty:
+                break
+        return messages
 
 
 def add_gui_handler(callback: Callable[[str], None]) -> GUILogHandler:

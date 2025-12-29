@@ -221,13 +221,15 @@ class LensCalibrationPanel(ttk.Frame):
         self.k1_var = tk.DoubleVar(value=self.settings.lens.distortion_k1)
         self.k1_label = tk.Label(
             k1_frame,
-            text=f"{self.k1_var.get():.3f}",
+            text=f"{self.k1_var.get():.4f}",
             font=FONTS["mono"],
             fg=COLORS["accent"],
             bg=COLORS["bg_medium"],
-            width=7,
+            width=8,
+            cursor="hand2",
         )
         self.k1_label.pack(side="right")
+        self.k1_label.bind("<Button-1>", lambda e: self._start_edit_k1())
 
         self.k1_scale = ttk.Scale(
             k1_frame,
@@ -268,13 +270,15 @@ class LensCalibrationPanel(ttk.Frame):
         self.k2_var = tk.DoubleVar(value=self.settings.lens.distortion_k2)
         self.k2_label = tk.Label(
             k2_frame,
-            text=f"{self.k2_var.get():.3f}",
+            text=f"{self.k2_var.get():.4f}",
             font=FONTS["mono"],
             fg=COLORS["accent"],
             bg=COLORS["bg_medium"],
-            width=7,
+            width=8,
+            cursor="hand2",
         )
         self.k2_label.pack(side="right")
+        self.k2_label.bind("<Button-1>", lambda e: self._start_edit_k2())
 
         self.k2_scale = ttk.Scale(
             k2_frame,
@@ -435,8 +439,8 @@ class LensCalibrationPanel(ttk.Frame):
             k1, k2 = CAMERA_PRESETS[preset]
             self.k1_var.set(k1)
             self.k2_var.set(k2)
-            self.k1_label.configure(text=f"{k1:.3f}")
-            self.k2_label.configure(text=f"{k2:.3f}")
+            self.k1_label.configure(text=f"{k1:.4f}")
+            self.k2_label.configure(text=f"{k2:.4f}")
 
             self.settings.lens.camera_preset = preset
             self.settings.lens.distortion_k1 = k1
@@ -458,7 +462,7 @@ class LensCalibrationPanel(ttk.Frame):
     def _on_k1_change(self, value):
         """Handle k1 slider change."""
         k1 = float(value)
-        self.k1_label.configure(text=f"{k1:.3f}")
+        self.k1_label.configure(text=f"{k1:.4f}")
         self.settings.lens.distortion_k1 = k1
         self.settings.lens.camera_preset = "custom"
         self.preset_var.set("custom")
@@ -473,7 +477,7 @@ class LensCalibrationPanel(ttk.Frame):
     def _on_k2_change(self, value):
         """Handle k2 slider change."""
         k2 = float(value)
-        self.k2_label.configure(text=f"{k2:.3f}")
+        self.k2_label.configure(text=f"{k2:.4f}")
         self.settings.lens.distortion_k2 = k2
         self.settings.lens.camera_preset = "custom"
         self.preset_var.set("custom")
@@ -484,6 +488,96 @@ class LensCalibrationPanel(ttk.Frame):
 
         self._update_display()
         self._update_deviation()
+
+    def _start_edit_k1(self):
+        """Start editing k1 value - replace label with entry."""
+        self.k1_label.pack_forget()
+        self.k1_entry = ttk.Entry(
+            self.k1_label.master,
+            width=10,
+            font=FONTS["mono"],
+        )
+        self.k1_entry.insert(0, f"{self.k1_var.get():.6f}")
+        self.k1_entry.pack(side="right")
+        self.k1_entry.select_range(0, tk.END)
+        self.k1_entry.focus_set()
+        self.k1_entry.bind("<Return>", lambda e: self._finish_edit_k1())
+        self.k1_entry.bind("<Escape>", lambda e: self._cancel_edit_k1())
+        self.k1_entry.bind("<FocusOut>", lambda e: self._finish_edit_k1())
+
+    def _finish_edit_k1(self):
+        """Finish editing k1 - validate and apply value."""
+        if not hasattr(self, 'k1_entry'):
+            return
+        try:
+            value = float(self.k1_entry.get())
+            self.k1_var.set(value)
+            self.k1_label.configure(text=f"{value:.4f}")
+            self.settings.lens.distortion_k1 = value
+            self.settings.lens.camera_preset = "custom"
+            self.preset_var.set("custom")
+            self._map1 = None
+            self._map2 = None
+            self._update_display()
+            self._update_deviation()
+            self.on_change()
+        except ValueError:
+            pass  # Invalid input, revert to current value
+        self.k1_entry.destroy()
+        del self.k1_entry
+        self.k1_label.pack(side="right")
+
+    def _cancel_edit_k1(self):
+        """Cancel editing k1 - revert to original value."""
+        if hasattr(self, 'k1_entry'):
+            self.k1_entry.destroy()
+            del self.k1_entry
+            self.k1_label.pack(side="right")
+
+    def _start_edit_k2(self):
+        """Start editing k2 value - replace label with entry."""
+        self.k2_label.pack_forget()
+        self.k2_entry = ttk.Entry(
+            self.k2_label.master,
+            width=10,
+            font=FONTS["mono"],
+        )
+        self.k2_entry.insert(0, f"{self.k2_var.get():.6f}")
+        self.k2_entry.pack(side="right")
+        self.k2_entry.select_range(0, tk.END)
+        self.k2_entry.focus_set()
+        self.k2_entry.bind("<Return>", lambda e: self._finish_edit_k2())
+        self.k2_entry.bind("<Escape>", lambda e: self._cancel_edit_k2())
+        self.k2_entry.bind("<FocusOut>", lambda e: self._finish_edit_k2())
+
+    def _finish_edit_k2(self):
+        """Finish editing k2 - validate and apply value."""
+        if not hasattr(self, 'k2_entry'):
+            return
+        try:
+            value = float(self.k2_entry.get())
+            self.k2_var.set(value)
+            self.k2_label.configure(text=f"{value:.4f}")
+            self.settings.lens.distortion_k2 = value
+            self.settings.lens.camera_preset = "custom"
+            self.preset_var.set("custom")
+            self._map1 = None
+            self._map2 = None
+            self._update_display()
+            self._update_deviation()
+            self.on_change()
+        except ValueError:
+            pass  # Invalid input, revert to current value
+        self.k2_entry.destroy()
+        del self.k2_entry
+        self.k2_label.pack(side="right")
+
+    def _cancel_edit_k2(self):
+        """Cancel editing k2 - revert to original value."""
+        if hasattr(self, 'k2_entry'):
+            self.k2_entry.destroy()
+            del self.k2_entry
+            self.k2_label.pack(side="right")
 
     def _on_canvas_click(self, event):
         """Handle canvas click to add reference point."""
@@ -621,8 +715,8 @@ class LensCalibrationPanel(ttk.Frame):
             # Update sliders
             self.k1_var.set(k1_opt)
             self.k2_var.set(k2_opt)
-            self.k1_label.configure(text=f"{k1_opt:.3f}")
-            self.k2_label.configure(text=f"{k2_opt:.3f}")
+            self.k1_label.configure(text=f"{k1_opt:.4f}")
+            self.k2_label.configure(text=f"{k2_opt:.4f}")
 
             # Update display and settings
             self.settings.lens.distortion_k1 = k1_opt
@@ -873,8 +967,8 @@ class LensCalibrationPanel(ttk.Frame):
         self.enabled_var.set(False)
         self.k1_var.set(0.0)
         self.k2_var.set(0.0)
-        self.k1_label.configure(text="0.000")
-        self.k2_label.configure(text="0.000")
+        self.k1_label.configure(text="0.0000")
+        self.k2_label.configure(text="0.0000")
         self.preset_var.set("custom")
 
         self._clear_points()

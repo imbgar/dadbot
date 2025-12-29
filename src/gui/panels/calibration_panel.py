@@ -46,6 +46,9 @@ class CalibrationPanel(ttk.Frame):
         self.video_path: str | None = None
         self.original_frame: np.ndarray | None = None
         self.photo_image = None
+        self.cap: cv2.VideoCapture | None = None
+        self.total_frames: int = 0
+        self.current_frame_idx: int = 0
 
         # Calibration line points
         self.point1: tuple[int, int] | None = None
@@ -81,6 +84,13 @@ class CalibrationPanel(ttk.Frame):
         self.bind_all("<Control-Shift-Z>", self._on_redo_key)
         self.bind_all("<Control-s>", self._on_save_key)
         self.bind_all("<Control-S>", self._on_save_key)
+
+    def destroy(self):
+        """Clean up resources."""
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+        super().destroy()
 
     def _create_layout(self):
         """Create the panel layout."""
@@ -132,6 +142,31 @@ class CalibrationPanel(ttk.Frame):
 
         self.canvas.bind("<Button-1>", self._on_click)
         self.canvas.bind("<Configure>", self._on_canvas_resize)
+
+        # Seek bar frame
+        seek_frame = ttk.Frame(canvas_frame, style="CardInner.TFrame")
+        seek_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.frame_label = tk.Label(
+            seek_frame,
+            text="Frame: 0 / 0",
+            font=FONTS["small"],
+            fg=COLORS["text_muted"],
+            bg=COLORS["bg_medium"],
+        )
+        self.frame_label.pack(side="left", padx=(0, 10))
+
+        self.seek_var = tk.IntVar(value=0)
+        self.seek_scale = ttk.Scale(
+            seek_frame,
+            from_=0,
+            to=100,
+            variable=self.seek_var,
+            orient="horizontal",
+            command=self._on_seek,
+        )
+        self.seek_scale.pack(side="left", fill="x", expand=True)
+        self.seek_scale.configure(state="disabled")
 
         # Right side - Controls (scrollable)
         controls_frame = ttk.Frame(content, style="Card.TFrame", width=300)
@@ -424,14 +459,35 @@ class CalibrationPanel(ttk.Frame):
             return
 
         try:
-            self.original_frame = extract_first_frame(path)
+            # Close existing capture if any
+            if self.cap is not None:
+                self.cap.release()
+
+            # Open video capture
+            self.cap = cv2.VideoCapture(path)
+            if not self.cap.isOpened():
+                raise ValueError("Could not open video file")
+
             self.video_path = path
+            self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.current_frame_idx = 0
+
+            # Read first frame
+            ret, frame = self.cap.read()
+            if not ret:
+                raise ValueError("Could not read first frame")
+            self.original_frame = frame
 
             info = get_video_info(path)
             self.video_label.configure(
                 text=f"{Path(path).name}\n{info['width']}x{info['height']} @ {info['fps']:.1f}fps",
                 fg=COLORS["text_primary"],
             )
+
+            # Enable and configure seek bar
+            self.seek_scale.configure(state="normal", to=max(1, self.total_frames - 1))
+            self.seek_var.set(0)
+            self.frame_label.configure(text=f"Frame: 1 / {self.total_frames}")
 
             self.settings.last_video_path = path
             self.on_change()
@@ -440,6 +496,25 @@ class CalibrationPanel(ttk.Frame):
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load video: {e}")
+
+    def _on_seek(self, value):
+        """Handle seek bar movement."""
+        if self.cap is None:
+            return
+
+        frame_idx = int(float(value))
+        if frame_idx == self.current_frame_idx:
+            return
+
+        # Seek to the frame
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = self.cap.read()
+
+        if ret:
+            self.original_frame = frame
+            self.current_frame_idx = frame_idx
+            self.frame_label.configure(text=f"Frame: {frame_idx + 1} / {self.total_frames}")
+            self._update_display()
 
     def _update_display(self):
         """Update the canvas display."""

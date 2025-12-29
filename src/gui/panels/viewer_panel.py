@@ -434,7 +434,7 @@ class LiveViewerPanel(ttk.Frame):
 
         # Inference resolution dropdown
         res_frame = ttk.Frame(inner, style="CardInner.TFrame")
-        res_frame.pack(anchor="w", pady=(2, 10))
+        res_frame.pack(anchor="w", pady=(2, 2))
 
         ttk.Label(res_frame, text="Inference Res:", style="Body.TLabel").pack(side="left")
         self.inference_res_var = tk.StringVar(value="640px max")
@@ -448,10 +448,27 @@ class LiveViewerPanel(ttk.Frame):
         res_combo.pack(side="left", padx=(5, 0))
         self._detection_controls.append(res_combo)
 
+        # Inference FPS dropdown
+        fps_frame = ttk.Frame(inner, style="CardInner.TFrame")
+        fps_frame.pack(anchor="w", pady=(2, 10))
+
+        ttk.Label(fps_frame, text="Inference FPS:", style="Body.TLabel").pack(side="left")
+        self.inference_fps_var = tk.StringVar(value=str(self.settings.detection.max_inference_fps))
+        fps_combo = ttk.Combobox(
+            fps_frame,
+            textvariable=self.inference_fps_var,
+            values=["1", "2", "3", "5", "10", "15", "30", "All"],
+            width=5,
+            state="readonly",
+        )
+        fps_combo.pack(side="left", padx=(5, 0))
+        fps_combo.bind("<<ComboboxSelected>>", self._on_inference_fps_change)
+        self._detection_controls.append(fps_combo)
+
         # Hint about modes
         self.mode_hint_label = tk.Label(
             inner,
-            text="InferencePipeline: Local model, optimized for RTSP\nOpenCV: Frame-by-frame, supports cloud GPU",
+            text="Pipeline=local, OpenCV=cloud option",
             font=FONTS["small"],
             fg=COLORS["text_muted"],
             bg=COLORS["bg_medium"],
@@ -500,6 +517,7 @@ class LiveViewerPanel(ttk.Frame):
         self.speed_entry.pack(side="left")
         self.speed_entry.bind("<Return>", self._on_speed_change)
         self.speed_entry.bind("<FocusOut>", self._on_speed_change)
+        self._detection_controls.append(self.speed_entry)
 
         ttk.Label(speed_frame, text="mph", style="Muted.TLabel").pack(side="left", padx=5)
 
@@ -728,8 +746,10 @@ class LiveViewerPanel(ttk.Frame):
             # Get the frame image
             image = frame.image.copy()
 
-            # Apply lens correction if enabled
-            image = self._apply_lens_correction(image)
+            # NOTE: Lens correction is NOT applied here to keep coordinates consistent
+            # with zone polygon. The InferencePipeline already ran detection on the
+            # original frame, so detections are in original coordinates.
+            # Mathematical lens correction is applied in the tracker for speed calculations.
 
             # Convert inference result to sv.Detections
             detections = sv.Detections.from_inference(result)
@@ -1411,8 +1431,9 @@ class LiveViewerPanel(ttk.Frame):
         if not ret:
             return False
 
-        # Apply lens correction if enabled
-        frame = self._apply_lens_correction(frame)
+        # NOTE: Lens correction is NOT applied here to keep coordinates consistent
+        # with zone polygon. Mathematical lens correction is applied in the tracker
+        # for accurate speed calculations via LensCorrector.
 
         # Calculate and update FPS display
         current_time = time.time()
@@ -1569,6 +1590,17 @@ class LiveViewerPanel(ttk.Frame):
             self._init_pipeline(self.video_info.fps)
         self.on_change()
 
+    def _on_inference_fps_change(self, event=None):
+        """Handle inference FPS selection change."""
+        fps_str = self.inference_fps_var.get()
+        if fps_str == "All":
+            # Use a very high value to effectively disable throttling
+            self.settings.detection.max_inference_fps = 999
+        else:
+            self.settings.detection.max_inference_fps = int(fps_str)
+        log.info(f"Inference FPS set to: {fps_str}")
+        self.on_change()
+
     def _on_pipeline_mode_toggle(self):
         """Handle InferencePipeline vs OpenCV mode toggle."""
         use_pipeline = self.use_inference_pipeline_var.get()
@@ -1593,19 +1625,21 @@ class LiveViewerPanel(ttk.Frame):
         Args:
             enabled: True to enable controls, False to disable.
         """
-        state = "normal" if enabled else "disabled"
         for control in self._detection_controls:
             try:
-                control.configure(state=state)
-            except tk.TclError:
-                pass  # Some widgets may not support state
+                widget_class = control.winfo_class()
 
-        # Also update the hint label appearance
-        if hasattr(self, 'mode_hint_label'):
-            if enabled:
-                self.mode_hint_label.configure(fg=COLORS["text_muted"])
-            else:
-                self.mode_hint_label.configure(fg=COLORS["text_muted"])
+                if widget_class == "TCombobox":
+                    # Combobox: use "readonly" when enabled, "disabled" when disabled
+                    control.configure(state="readonly" if enabled else "disabled")
+                elif widget_class in ("TCheckbutton", "TScale", "TEntry"):
+                    # Standard ttk widgets
+                    control.configure(state="normal" if enabled else "disabled")
+                else:
+                    # Fallback for other widgets
+                    control.configure(state="normal" if enabled else "disabled")
+            except tk.TclError as e:
+                log.debug(f"Could not set state for {control}: {e}")
 
     def _on_conf_change(self, value):
         """Handle confidence threshold change."""

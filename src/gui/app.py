@@ -29,8 +29,8 @@ class DadBotApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("DadBot Traffic Monitor")
-        self.root.geometry("1200x800")
-        self.root.minsize(1000, 700)
+        self.root.geometry("1600x1000")
+        self.root.minsize(1200, 800)
 
         # Set window icon (if available)
         try:

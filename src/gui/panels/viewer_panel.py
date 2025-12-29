@@ -1,6 +1,8 @@
 """Live Viewer Panel for DadBot Traffic Monitor."""
 
 import os
+import queue
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
@@ -19,14 +21,26 @@ from src.config import (
     TrackingConfig,
     VisualizationConfig,
     ZoneConfig,
+    VEHICLE_CLASS_NAMES,
+    VehicleClass,
 )
-from src.detector import VehicleDetector
+from src.detector import VehicleDetector, DetectionResult
 from src.gui.components import ScrollableFrame
 from src.gui.styles import COLORS, FONTS
 from src.settings import AppSettings, LeadCornerMode, LabelDisplayMode
 from src.tracker import VehicleTracker
 from src.utils import get_video_info
 from src.visualizer import TrafficVisualizer
+
+# Import InferencePipeline for real-time streaming
+try:
+    from inference import InferencePipeline
+    from inference.core.interfaces.camera.entities import VideoFrame
+    INFERENCE_PIPELINE_AVAILABLE = True
+except ImportError:
+    INFERENCE_PIPELINE_AVAILABLE = False
+    InferencePipeline = None
+    VideoFrame = None
 
 log = get_logger("viewer")
 
@@ -85,6 +99,12 @@ class LiveViewerPanel(ttk.Frame):
         self._lens_k1 = None
         self._lens_k2 = None
         self._lens_frame_size = None
+
+        # InferencePipeline for real-time RTSP (much faster than HTTP per-frame)
+        self._inference_pipeline: InferencePipeline | None = None
+        self._pipeline_queue: queue.Queue = queue.Queue(maxsize=2)  # Small buffer
+        self._pipeline_fps_monitor = sv.FPSMonitor()
+        self._use_inference_pipeline = INFERENCE_PIPELINE_AVAILABLE
 
         self._create_layout()
 
@@ -486,6 +506,9 @@ class LiveViewerPanel(ttk.Frame):
 
     def _reset_pipeline(self) -> None:
         """Reset the ML pipeline for a new video."""
+        # Stop inference pipeline if running
+        self._stop_inference_pipeline()
+
         self.detector = None
         self.tracker = None
         self.visualizer = None
@@ -502,6 +525,12 @@ class LiveViewerPanel(ttk.Frame):
         # Reset lens correction cache
         self._lens_map1 = None
         self._lens_map2 = None
+        # Clear pipeline queue
+        while not self._pipeline_queue.empty():
+            try:
+                self._pipeline_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def _apply_lens_correction(self, frame: np.ndarray) -> np.ndarray:
         """Apply lens distortion correction if enabled."""
@@ -552,6 +581,313 @@ class LiveViewerPanel(ttk.Frame):
         self._lens_frame_size = frame_size
 
         return cv2.remap(frame, self._lens_map1, self._lens_map2, cv2.INTER_LINEAR)
+
+    # =========================================================================
+    # InferencePipeline for Real-Time RTSP (runs locally, ~25+ FPS)
+    # =========================================================================
+
+    def _on_pipeline_prediction(self, result: dict, frame: VideoFrame) -> None:
+        """Callback from InferencePipeline - runs in pipeline thread.
+
+        This is called for each frame processed by the pipeline.
+        We queue the result for the GUI thread to display.
+        """
+        self._pipeline_fps_monitor.tick()
+
+        # Log first frame received
+        if self.frame_index == 0:
+            log.info(f"First frame received! Shape: {frame.image.shape}")
+
+        try:
+            # Get the frame image
+            image = frame.image.copy()
+
+            # Apply lens correction if enabled
+            image = self._apply_lens_correction(image)
+
+            # Convert inference result to sv.Detections
+            detections = sv.Detections.from_inference(result)
+
+            # Filter to vehicle classes only
+            if len(detections) > 0:
+                class_names = detections.data.get("class_name", [])
+                vehicle_class_names = set(VEHICLE_CLASS_NAMES.keys())
+                vehicle_mask = np.array([
+                    str(name).lower() in vehicle_class_names
+                    for name in class_names
+                ])
+                detections = detections[vehicle_mask]
+
+            # Update tracker
+            if self.tracker and len(detections) > 0:
+                # Create a minimal DetectionResult for tracker
+                vehicle_classes = [
+                    VEHICLE_CLASS_NAMES.get(str(name).lower(), VehicleClass.CAR)
+                    for name in detections.data.get("class_name", [])
+                ]
+                detection_result = DetectionResult(
+                    detections=detections,
+                    vehicle_classes=vehicle_classes,
+                    frame_index=self.frame_index,
+                )
+                tracking_result = self.tracker.update(detection_result)
+            else:
+                tracking_result = None
+
+            # Queue frame and result for GUI display (non-blocking)
+            try:
+                self._pipeline_queue.put_nowait({
+                    "frame": image,
+                    "detections": detections,
+                    "tracking_result": tracking_result,
+                    "fps": self._pipeline_fps_monitor.fps,
+                    "frame_index": self.frame_index,
+                })
+            except queue.Full:
+                # Drop frame if queue is full (keep latest)
+                try:
+                    self._pipeline_queue.get_nowait()
+                    self._pipeline_queue.put_nowait({
+                        "frame": image,
+                        "detections": detections,
+                        "tracking_result": tracking_result,
+                        "fps": self._pipeline_fps_monitor.fps,
+                        "frame_index": self.frame_index,
+                    })
+                except (queue.Empty, queue.Full):
+                    pass
+
+            self.frame_index += 1
+
+        except Exception as e:
+            log.error(f"Pipeline prediction error: {e}")
+
+    def _start_inference_pipeline_async(self, rtsp_url: str) -> None:
+        """Start the InferencePipeline in a background thread (non-blocking).
+
+        This runs initialization in a thread since model download can be slow.
+        """
+        def _init_and_start():
+            try:
+                # Use RF-DETR model from settings
+                model_id = self.settings.detection.model_id
+
+                api_key = os.environ.get("ROBOFLOW_API_KEY")
+                if not api_key:
+                    log.error("ROBOFLOW_API_KEY not set")
+                    self.after(0, lambda: self._on_pipeline_failed("ROBOFLOW_API_KEY not set"))
+                    return
+
+                # Check if model is cached
+                from inference.core.env import MODEL_CACHE_DIR
+                model_cache_path = os.path.join(MODEL_CACHE_DIR, model_id.replace("/", "--"))
+                is_cached = os.path.exists(model_cache_path) and os.listdir(model_cache_path)
+
+                if is_cached:
+                    log.info(f"Model {model_id} found in cache")
+                    self.after(0, lambda: self._update_pipeline_status("Loading cached model..."))
+                else:
+                    log.info(f"Downloading model {model_id} (first run)...")
+                    self.after(0, lambda: self._update_pipeline_status("Downloading model (first run)..."))
+
+                # Status handler to track pipeline events
+                def on_status_update(status):
+                    event_type = status.event_type
+                    payload = status.payload
+                    log.info(f"Pipeline event: {event_type} | {payload}")
+
+                    if "ERROR" in event_type:
+                        error_msg = payload.get("error", "Unknown error")
+                        self.after(0, lambda e=error_msg: self._update_pipeline_status(f"Error: {e}"))
+                    elif "VIDEO_SOURCE" in event_type:
+                        self.after(0, lambda: self._update_pipeline_status("Video source ready"))
+                    elif "INFERENCE_THREAD_STARTED" in event_type:
+                        self.after(0, lambda: self._update_pipeline_status("Inference thread started"))
+
+                self._inference_pipeline = InferencePipeline.init(
+                    model_id=model_id,
+                    video_reference=rtsp_url,
+                    on_prediction=self._on_pipeline_prediction,
+                    confidence=self.settings.detection.confidence_threshold,
+                    iou_threshold=self.settings.detection.iou_threshold,
+                    api_key=api_key,
+                    status_update_handlers=[on_status_update],
+                )
+
+                log.debug("Pipeline initialized, starting...")
+                self.after(0, lambda: self._update_pipeline_status("Starting inference..."))
+                self._inference_pipeline.start()
+                log.info("InferencePipeline running")
+
+                # Notify GUI thread that pipeline is ready
+                self.after(0, self._on_pipeline_started)
+
+            except Exception as e:
+                log.error(f"Pipeline init failed: {e}", exc_info=True)
+                self.after(0, lambda: self._on_pipeline_failed(str(e)))
+
+        # Run in background thread
+        thread = threading.Thread(target=_init_and_start, daemon=True)
+        thread.start()
+
+    def _update_pipeline_status(self, status: str) -> None:
+        """Update the pipeline status display."""
+        model_id = self.settings.detection.model_id
+        self.video_info_label.configure(
+            text=f"RTSP Stream (InferencePipeline)\nModel: {model_id}\nStatus: {status}",
+            fg=COLORS["text_secondary"],
+        )
+
+    def _on_pipeline_started(self) -> None:
+        """Called on GUI thread when pipeline starts successfully."""
+        model_id = self.settings.detection.model_id
+        log.info(f"Pipeline started ({model_id}), beginning display loop")
+        self.video_info_label.configure(
+            text=f"RTSP Stream (InferencePipeline)\nModel: {model_id}\nStatus: Running",
+            fg=COLORS["success"],
+        )
+        self._pipeline_display_loop()
+
+    def _on_pipeline_failed(self, error: str) -> None:
+        """Called on GUI thread when pipeline fails to start."""
+        log.warning(f"Pipeline failed: {error}, falling back to OpenCV")
+        self._inference_pipeline = None
+
+        # Fall back to OpenCV mode
+        if self.rtsp_url:
+            self._connect_rtsp_opencv_fallback()
+
+    def _connect_rtsp_opencv_fallback(self) -> None:
+        """Fallback to OpenCV-based RTSP capture."""
+        url = self.rtsp_url
+        log.info(f"Using OpenCV fallback for: {url}")
+
+        try:
+            self._set_rtsp_options()
+            self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            if not self.cap.isOpened():
+                raise ValueError("Could not connect to stream")
+
+            width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
+
+            self.video_info = sv.VideoInfo(width=width, height=height, fps=fps, total_frames=0)
+            self.frame_delay = int(1000 / fps)
+            self._init_pipeline(fps)
+
+            log.info(f"OpenCV connected: {width}x{height} @ {fps:.1f}fps")
+
+            self.video_info_label.configure(
+                text=f"RTSP Stream (OpenCV)\n{width}x{height} @ {fps:.1f}fps",
+                fg=COLORS["warning"],
+            )
+
+            self._play_loop()
+
+        except Exception as e:
+            log.error(f"OpenCV fallback failed: {e}")
+            self.video_info_label.configure(
+                text=f"Connection failed:\n{e}",
+                fg=COLORS["error"],
+            )
+
+    def _start_inference_pipeline(self, rtsp_url: str) -> bool:
+        """Start the InferencePipeline for real-time RTSP inference.
+
+        Returns True if pipeline initialization was started (async).
+        """
+        if not INFERENCE_PIPELINE_AVAILABLE:
+            log.warning("InferencePipeline not available, falling back to HTTP")
+            return False
+
+        api_key = os.environ.get("ROBOFLOW_API_KEY")
+        if not api_key:
+            log.error("ROBOFLOW_API_KEY not set, cannot use InferencePipeline")
+            return False
+
+        # Start async initialization
+        self._start_inference_pipeline_async(rtsp_url)
+        return True
+
+    def _stop_inference_pipeline(self) -> None:
+        """Stop the running InferencePipeline."""
+        if self._inference_pipeline is not None:
+            try:
+                log.info("Stopping InferencePipeline...")
+                self._inference_pipeline.terminate()
+                self._inference_pipeline.join(timeout=2.0)
+            except Exception as e:
+                log.warning(f"Error stopping pipeline: {e}")
+            finally:
+                self._inference_pipeline = None
+
+    def _pipeline_display_loop(self) -> None:
+        """GUI loop to display frames from the pipeline queue."""
+        if not self.running:
+            log.debug("Display loop stopped: not running")
+            return
+
+        if self._inference_pipeline is None:
+            log.debug("Display loop stopped: no pipeline")
+            return
+
+        try:
+            # Get frame from queue (non-blocking)
+            data = self._pipeline_queue.get_nowait()
+
+            frame = data["frame"]
+            tracking_result = data["tracking_result"]
+            fps = data["fps"]
+            frame_idx = data["frame_index"]
+
+            # Annotate frame if we have tracking results
+            if tracking_result and self.visualizer:
+                frame = self.visualizer.annotate_frame(frame, tracking_result)
+            elif self.show_zone_var.get() and self.settings.zone.polygon_points:
+                frame = self._draw_zone_overlay(frame)
+
+            # Update FPS display
+            self._current_fps = fps
+            self.frame_label.configure(
+                text=f"LIVE | {fps:.1f} FPS | Frame: {frame_idx}"
+            )
+
+            # Display frame
+            self._display_frame(frame)
+
+        except queue.Empty:
+            # No frame available yet - this is normal while waiting
+            pass
+
+        # Schedule next update (~60 FPS display rate)
+        if self.running and self._inference_pipeline is not None:
+            self.after(16, self._pipeline_display_loop)
+        else:
+            log.debug("Display loop ending")
+
+    def _display_frame(self, frame: np.ndarray) -> None:
+        """Display a frame on the canvas."""
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+
+        if canvas_w > 1 and canvas_h > 1:
+            h, w = frame.shape[:2]
+            scale = min(canvas_w / w, canvas_h / h, 1.0)
+            new_w, new_h = int(w * scale), int(h * scale)
+            frame = cv2.resize(frame, (new_w, new_h))
+
+            # Convert and display
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame_rgb)
+            self.photo_image = ImageTk.PhotoImage(image)
+
+            self.canvas.delete("all")
+            x_offset = (canvas_w - new_w) // 2
+            y_offset = (canvas_h - new_h) // 2
+            self.canvas.create_image(x_offset, y_offset, anchor="nw", image=self.photo_image)
 
     def _load_video(self):
         """Load a video file."""
@@ -639,7 +975,7 @@ class LiveViewerPanel(ttk.Frame):
             del os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
 
     def _connect_rtsp(self):
-        """Connect to an RTSP stream."""
+        """Connect to an RTSP stream using InferencePipeline for real-time inference."""
         url = self.rtsp_var.get().strip()
         if not url:
             messagebox.showwarning("Warning", "Please enter an RTSP URL")
@@ -667,13 +1003,46 @@ class LiveViewerPanel(ttk.Frame):
             )
             self.update_idletasks()
 
-            # Set FFmpeg options for TCP transport
+            detection_enabled = self.detection_enabled_var.get()
+
+            # Try to use InferencePipeline for real-time inference (much faster)
+            if detection_enabled and self._use_inference_pipeline:
+                log.info("Using InferencePipeline for real-time inference (~25+ FPS)")
+
+                # Initialize tracker and visualizer for pipeline
+                fps = 30.0
+                self.video_info = sv.VideoInfo(width=1920, height=1080, fps=fps, total_frames=0)
+                self._init_pipeline(fps)
+
+                # Start the inference pipeline (async - will call _on_pipeline_started when ready)
+                if self._start_inference_pipeline(url):
+                    # Update button states
+                    self.rtsp_connect_btn.configure(state="disabled")
+                    self.rtsp_disconnect_btn.configure(state="normal")
+
+                    # Save URL for next session
+                    self.settings.last_rtsp_url = url
+                    self.on_change()
+
+                    # Show loading status (pipeline starts async)
+                    model_id = self.settings.detection.model_id
+                    self.video_info_label.configure(
+                        text=f"RTSP Stream (InferencePipeline)\nModel: {model_id}\nStatus: Loading model...",
+                        fg=COLORS["text_secondary"],
+                    )
+
+                    # Mark as running - display loop starts when pipeline is ready
+                    self.running = True
+                    self.play_btn.configure(text="⏸ Pause")
+                    return
+                else:
+                    log.warning("InferencePipeline not available, falling back to OpenCV")
+
+            # Fallback: Use OpenCV for stream capture (slower, HTTP-based inference)
+            log.info("Using OpenCV capture (fallback mode)")
             self._set_rtsp_options()
 
-            # Connect to RTSP stream
             self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-
-            # Set buffer size to reduce latency
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             if not self.cap.isOpened():
@@ -684,12 +1053,11 @@ class LiveViewerPanel(ttk.Frame):
             height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-            # Create VideoInfo for visualizer
             self.video_info = sv.VideoInfo(
                 width=width,
                 height=height,
                 fps=fps,
-                total_frames=0,  # Unknown for streams
+                total_frames=0,
             )
 
             self.frame_delay = int(1000 / fps)
@@ -698,15 +1066,15 @@ class LiveViewerPanel(ttk.Frame):
             # Initialize ML pipeline
             self._init_pipeline(fps)
 
-            log.info(f"RTSP connected: {width}x{height} @ {fps:.1f}fps")
+            log.info(f"RTSP connected (OpenCV): {width}x{height} @ {fps:.1f}fps")
 
             # Update UI
-            status = f"RTSP Stream\n{width}x{height} @ {fps:.1f}fps"
+            mode = "OpenCV + HTTP" if detection_enabled else "OpenCV (no ML)"
+            status = f"RTSP Stream\n{width}x{height} @ {fps:.1f}fps\nMode: {mode}"
             if self._pipeline_error:
                 status += f"\nML: {self._pipeline_error}"
                 self.video_info_label.configure(text=status, fg=COLORS["warning"])
             else:
-                status += "\nML: Ready"
                 self.video_info_label.configure(text=status, fg=COLORS["success"])
 
             # Update button states
@@ -726,6 +1094,7 @@ class LiveViewerPanel(ttk.Frame):
             log.error(f"RTSP connection failed: {e}")
             self.is_rtsp_mode = False
             self.rtsp_url = None
+            self._stop_inference_pipeline()
             self.video_info_label.configure(
                 text=f"Connection failed:\n{e}",
                 fg=COLORS["error"],
@@ -738,6 +1107,7 @@ class LiveViewerPanel(ttk.Frame):
         """Disconnect from RTSP stream."""
         log.info("Disconnecting from RTSP stream")
         self._stop_video()
+        self._stop_inference_pipeline()
         self._clear_rtsp_options()
         self.is_rtsp_mode = False
         self.rtsp_url = None

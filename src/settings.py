@@ -86,7 +86,7 @@ class CalibrationSettings(BaseModel):
 class DetectionSettings(BaseModel):
     """Object detection settings."""
 
-    model_id: str = "rfdetr-base"
+    model_id: str = "rfdetr-medium"
     confidence_threshold: float = 0.3
     iou_threshold: float = 0.5
 

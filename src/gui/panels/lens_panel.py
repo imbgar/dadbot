@@ -12,7 +12,6 @@ from PIL import Image, ImageTk
 from src.gui.components import ScrollableFrame
 from src.gui.styles import COLORS, FONTS
 from src.settings import AppSettings, CAMERA_PRESETS
-from src.utils import extract_first_frame
 
 
 class LensCalibrationPanel(ttk.Frame):
@@ -38,6 +37,9 @@ class LensCalibrationPanel(ttk.Frame):
         self.photo_image = None
         self.frame_height = 0
         self.frame_width = 0
+        self.cap: cv2.VideoCapture | None = None
+        self.total_frames: int = 0
+        self.current_frame_idx: int = 0
 
         # Reference points for calibration line
         self.reference_points: list[tuple[int, int]] = []
@@ -61,6 +63,13 @@ class LensCalibrationPanel(ttk.Frame):
         if self.reference_points:
             self.points_label.configure(text=f"Points: {len(self.reference_points)}")
             self._update_deviation()
+
+    def destroy(self):
+        """Clean up resources."""
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+        super().destroy()
 
     def _create_layout(self):
         """Create the panel layout."""
@@ -105,6 +114,31 @@ class LensCalibrationPanel(ttk.Frame):
             tags="placeholder",
             justify="center",
         )
+
+        # Seek bar frame
+        seek_frame = ttk.Frame(preview_frame, style="CardInner.TFrame")
+        seek_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.frame_label = tk.Label(
+            seek_frame,
+            text="Frame: 0 / 0",
+            font=FONTS["small"],
+            fg=COLORS["text_muted"],
+            bg=COLORS["bg_medium"],
+        )
+        self.frame_label.pack(side="left", padx=(0, 10))
+
+        self.seek_var = tk.IntVar(value=0)
+        self.seek_scale = ttk.Scale(
+            seek_frame,
+            from_=0,
+            to=100,
+            variable=self.seek_var,
+            orient="horizontal",
+            command=self._on_seek,
+        )
+        self.seek_scale.pack(side="left", fill="x", expand=True)
+        self.seek_scale.configure(state="disabled")
 
         # Right side - Controls (scrollable)
         controls_frame = ttk.Frame(content, style="Card.TFrame", width=320)
@@ -405,17 +439,36 @@ class LensCalibrationPanel(ttk.Frame):
             return
 
         try:
-            self.original_frame = extract_first_frame(path)
-            if self.original_frame is None:
-                raise ValueError("Could not extract frame")
+            # Close existing capture if any
+            if self.cap is not None:
+                self.cap.release()
+
+            # Open video capture
+            self.cap = cv2.VideoCapture(path)
+            if not self.cap.isOpened():
+                raise ValueError("Could not open video file")
 
             self.video_path = path
+            self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.current_frame_idx = 0
+
+            # Read first frame
+            ret, frame = self.cap.read()
+            if not ret:
+                raise ValueError("Could not read first frame")
+
+            self.original_frame = frame
             self.frame_height, self.frame_width = self.original_frame.shape[:2]
 
             self.source_label.configure(
                 text=f"{Path(path).name}\n{self.frame_width}x{self.frame_height}",
                 fg=COLORS["text_primary"],
             )
+
+            # Enable and configure seek bar
+            self.seek_scale.configure(state="normal", to=max(1, self.total_frames - 1))
+            self.seek_var.set(0)
+            self.frame_label.configure(text=f"Frame: 1 / {self.total_frames}")
 
             self.settings.last_video_path = path
             self.on_change()
@@ -431,6 +484,27 @@ class LensCalibrationPanel(ttk.Frame):
                 text=f"Error: {e}",
                 fg=COLORS["error"],
             )
+
+    def _on_seek(self, value):
+        """Handle seek bar movement."""
+        if self.cap is None:
+            return
+
+        frame_idx = int(float(value))
+        if frame_idx == self.current_frame_idx:
+            return
+
+        # Seek to the frame
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = self.cap.read()
+
+        if ret:
+            self.original_frame = frame
+            self.current_frame_idx = frame_idx
+            self.frame_label.configure(text=f"Frame: {frame_idx + 1} / {self.total_frames}")
+            self._map1 = None  # Clear cached correction maps
+            self._map2 = None
+            self._update_display()
 
     def _on_preset_change(self, event=None):
         """Handle camera preset change."""

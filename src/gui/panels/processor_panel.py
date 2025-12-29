@@ -169,7 +169,7 @@ class ProcessorPanel(ttk.Frame):
         self.console.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Initial message
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.console.writeln(f"{timestamp} │ DadBot Traffic Monitor - Video Processor", "accent")
         self.console.writeln(f"{timestamp} │ {'═' * 45}", "muted")
         self.console.writeln("")
@@ -340,9 +340,9 @@ class ProcessorPanel(ttk.Frame):
                 target_fps = float(target_fps_str)
                 frame_skip = max(1, int(video_info.fps / target_fps))
 
-            frames_to_process = video_info.total_frames // frame_skip
-            self.output_queue.put(("info", f"Process FPS: {target_fps} (skip every {frame_skip} frames)"))
-            self.output_queue.put(("info", f"Frames to process: {frames_to_process}"))
+            inference_frames = video_info.total_frames // frame_skip
+            self.output_queue.put(("info", f"Detection FPS: {target_fps} (ML every {frame_skip} frames)"))
+            self.output_queue.put(("info", f"ML inferences: {inference_frames}, Video frames: {video_info.total_frames}"))
             self.output_queue.put(("info", f"Pixels per foot: {calibration.pixels_per_foot:.2f}"))
             self.output_queue.put(("info", ""))
 
@@ -382,64 +382,74 @@ class ProcessorPanel(ttk.Frame):
             self.output_queue.put(("info", ""))
 
             # Process frames
+            # Strategy: Run ML detection every Nth frame, but write ALL frames to output
+            # This gives normal playback speed while reducing inference load
             frame_generator = sv.get_video_frames_generator(source_path=video_path)
             total_frames = video_info.total_frames
-            processed_count = 0
+            inference_count = 0  # Frames with ML detection
+            last_tracking_result = None  # Cache for re-using on non-detection frames
 
             for frame_index, frame in enumerate(frame_generator):
                 if not self.processing:
                     self.output_queue.put(("warning", "Processing stopped by user"))
                     break
 
-                # Skip frames based on frame_skip interval
-                if frame_index % frame_skip != 0:
-                    continue
-
-                processed_count += 1
-
                 try:
-                    # Detect, track, record
-                    detection_result = detector.detect(frame, frame_index)
-                    tracking_result = tracker.update(detection_result)
+                    # Run ML detection only on detection frames (every frame_skip interval)
+                    if frame_index % frame_skip == 0:
+                        inference_count += 1
+                        detection_result = detector.detect(frame, frame_index)
+                        tracking_result = tracker.update(detection_result)
+                        last_tracking_result = tracking_result
 
-                    for vehicle in tracking_result.tracked_vehicles.values():
-                        reporter.record_vehicle(vehicle)
+                        # Record vehicles only on detection frames
+                        for vehicle in tracking_result.tracked_vehicles.values():
+                            reporter.record_vehicle(vehicle)
+                    else:
+                        # Re-use last tracking result for annotation (no new detection)
+                        tracking_result = last_tracking_result
 
-                    # Visualize
-                    annotated_frame = visualizer.annotate_frame(frame, tracking_result)
+                    # Visualize and write ALL frames for smooth playback
+                    if tracking_result is not None:
+                        annotated_frame = visualizer.annotate_frame(frame, tracking_result)
+                    else:
+                        annotated_frame = frame  # No detections yet
 
                     if visualization.save_video:
                         visualizer.write_frame(annotated_frame)
 
                 except Exception as e:
                     # Log detection errors but continue processing
-                    if processed_count == 1:
+                    if inference_count == 1:
                         self.output_queue.put(("error", f"Detection error on first frame: {e}"))
                         self.output_queue.put(("warning", "Check your API key and network connection"))
                         raise  # Re-raise to stop processing if first frame fails
-                    elif processed_count % 50 == 0:
+                    elif inference_count % 50 == 0:
                         self.output_queue.put(("warning", f"Detection error on frame {frame_index}: {e}"))
+                    # Still write the frame even if detection failed
+                    if visualization.save_video and last_tracking_result is not None:
+                        annotated_frame = visualizer.annotate_frame(frame, last_tracking_result)
+                        visualizer.write_frame(annotated_frame)
                     continue
 
-                # Log progress periodically (every 15 processed frames for smoother updates)
-                if processed_count > 0 and processed_count % 15 == 0:
-                    progress = (processed_count / frames_to_process) * 100
+                # Log progress every 100 frames
+                if frame_index > 0 and frame_index % 100 == 0:
+                    progress = (frame_index / total_frames) * 100
                     self.output_queue.put(("progress", progress))
 
-                    if processed_count % 50 == 0:
-                        elapsed = time.time() - start_time
-                        fps = processed_count / elapsed if elapsed > 0 else 0
-                        eta_seconds = (frames_to_process - processed_count) / fps if fps > 0 else 0
-                        eta_str = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s" if eta_seconds > 0 else "calculating..."
+                    elapsed = time.time() - start_time
+                    fps = frame_index / elapsed if elapsed > 0 else 0
+                    eta_seconds = (total_frames - frame_index) / fps if fps > 0 else 0
+                    eta_str = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s" if eta_seconds > 0 else "calculating..."
 
-                        summary = reporter.get_summary()
-                        self.output_queue.put((
-                            "info",
-                            f"[{progress:5.1f}%] Frame {processed_count}/{frames_to_process} │ "
-                            f"Vehicles: {summary.get('vehicles_counted', 0)} │ "
-                            f"Violations: {summary.get('violations', 0)} │ "
-                            f"ETA: {eta_str}"
-                        ))
+                    summary = reporter.get_summary()
+                    self.output_queue.put((
+                        "info",
+                        f"[{progress:5.1f}%] Frame {frame_index}/{total_frames} │ "
+                        f"Inferences: {inference_count} │ "
+                        f"Vehicles: {summary.get('vehicles_counted', 0)} │ "
+                        f"ETA: {eta_str}"
+                    ))
 
             # Finalize
             self.output_queue.put(("info", ""))
@@ -454,7 +464,8 @@ class ProcessorPanel(ttk.Frame):
             elapsed_seconds = end_time - start_time
             elapsed_min = int(elapsed_seconds // 60)
             elapsed_sec = int(elapsed_seconds % 60)
-            avg_fps = processed_count / elapsed_seconds if elapsed_seconds > 0 else 0
+            avg_fps = frame_index / elapsed_seconds if elapsed_seconds > 0 else 0
+            inference_fps = inference_count / elapsed_seconds if elapsed_seconds > 0 else 0
 
             self.output_queue.put(("info", ""))
             self.output_queue.put(("accent", "═" * 50))
@@ -467,8 +478,9 @@ class ProcessorPanel(ttk.Frame):
             self.output_queue.put(("info", f"  Start:   {start_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"))
             self.output_queue.put(("info", f"  End:     {end_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"))
             self.output_queue.put(("info", f"  Elapsed: {elapsed_min}m {elapsed_sec}s"))
-            self.output_queue.put(("info", f"  Frames:  {processed_count}/{total_frames} (1:{frame_skip} sampling)"))
-            self.output_queue.put(("info", f"  Avg FPS: {avg_fps:.1f}"))
+            self.output_queue.put(("info", f"  Frames:  {frame_index + 1}/{total_frames} written"))
+            self.output_queue.put(("info", f"  ML runs: {inference_count} (1:{frame_skip} sampling)"))
+            self.output_queue.put(("info", f"  Avg FPS: {avg_fps:.1f} (inference: {inference_fps:.1f})"))
             self.output_queue.put(("info", ""))
 
             # Results summary
@@ -506,7 +518,7 @@ class ProcessorPanel(ttk.Frame):
                     self.stop_btn.configure(state="disabled")
                 else:
                     # Add timestamp to console messages
-                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     self.console.writeln(f"{timestamp} │ {msg}", msg_type)
 
         except queue.Empty:

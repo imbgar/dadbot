@@ -238,6 +238,19 @@ class AppSettings(BaseModel):
         from src.utils import CONFIG_DIR
         return CONFIG_DIR / "settings.yaml"
 
+    @classmethod
+    def get_history_path(cls) -> Path:
+        """Get the history file path (./config/history.yaml)."""
+        from src.utils import CONFIG_DIR
+        return CONFIG_DIR / "history.yaml"
+
+    def save_history(self) -> None:
+        """Save current settings to history.yaml as a backup.
+
+        This preserves saved zones, calibrations, lens settings, etc.
+        """
+        self.save(self.get_history_path())
+
     def _to_serializable(self, obj: Any) -> Any:
         """Convert object to YAML-serializable format."""
         if isinstance(obj, dict):

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "inference>=0.38.0",
+    "inference-sdk>=0.38.0",
     "supervision>=0.25.0",
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",

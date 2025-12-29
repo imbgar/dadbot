@@ -23,6 +23,9 @@ from src.config import (
     VehicleClass,
 )
 from src.detector import DetectionResult
+from src.utils import get_logger
+
+log = get_logger("tracker")
 
 
 @dataclass
@@ -140,6 +143,10 @@ class VehicleTracker:
         # Vehicle class mapping from last detection
         self._last_vehicle_classes: dict[int, VehicleClass] = {}
 
+        log.info(f"VehicleTracker initialized: fps={fps}, buffer={self.config.track_buffer}")
+        log.debug(f"Calibration: {self.calibration.pixels_per_foot:.2f} px/ft, "
+                  f"speed limit={self.config.speed_limit_mph} mph")
+
     def update(self, detection_result: DetectionResult) -> TrackingResult:
         """Update tracking with new detections.
 
@@ -214,6 +221,7 @@ class VehicleTracker:
                     first_seen=now,
                     last_seen=now,
                 )
+                log.debug(f"New vehicle tracked: #{tracker_id} ({vehicle_class.value})")
 
             vehicle = self.tracked_vehicles[tracker_id]
             vehicle.last_seen = now
@@ -281,6 +289,11 @@ class VehicleTracker:
         # Sanity check: ignore unrealistic speeds
         if 0 < speed_mph < 150:  # Max reasonable speed
             vehicle.speeds_mph.append(speed_mph)
+            # Log first speed violation for this vehicle
+            if (speed_mph > self.config.speed_limit_mph and
+                len([s for s in vehicle.speeds_mph if s > self.config.speed_limit_mph]) == 1):
+                log.warning(f"Speed violation: #{vehicle.tracker_id} "
+                            f"at {speed_mph:.1f} mph (limit: {self.config.speed_limit_mph} mph)")
 
     def _determine_direction(self, vehicle: TrackedVehicle) -> None:
         """Determine vehicle travel direction based on movement.
@@ -411,6 +424,7 @@ class VehicleTracker:
 
     def reset(self) -> None:
         """Reset tracker state for new video or time window."""
+        vehicle_count = len(self.tracked_vehicles)
         self.byte_track = sv.ByteTrack(
             frame_rate=int(self.fps),
             track_activation_threshold=0.25,
@@ -420,3 +434,4 @@ class VehicleTracker:
         self.tracked_vehicles.clear()
         self.position_history.clear()
         self._last_vehicle_classes.clear()
+        log.info(f"Tracker reset (was tracking {vehicle_count} vehicles)")

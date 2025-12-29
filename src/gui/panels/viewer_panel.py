@@ -12,6 +12,7 @@ import numpy as np
 import supervision as sv
 from PIL import Image, ImageTk
 
+from src.utils import get_logger
 from src.config import (
     CalibrationConfig,
     DetectionConfig,
@@ -26,6 +27,8 @@ from src.settings import AppSettings, LeadCornerMode, LabelDisplayMode
 from src.tracker import VehicleTracker
 from src.utils import get_video_info
 from src.visualizer import TrafficVisualizer
+
+log = get_logger("viewer")
 
 
 class LiveViewerPanel(ttk.Frame):
@@ -75,6 +78,13 @@ class LiveViewerPanel(ttk.Frame):
         self._fps_update_interval = 0.5  # Update FPS display every 0.5 seconds
         self._last_fps_update: float = 0.0
         self._current_fps: float = 0.0
+
+        # Lens correction maps (cached for performance)
+        self._lens_map1 = None
+        self._lens_map2 = None
+        self._lens_k1 = None
+        self._lens_k2 = None
+        self._lens_frame_size = None
 
         self._create_layout()
 
@@ -343,7 +353,17 @@ class LiveViewerPanel(ttk.Frame):
             variable=self.detection_enabled_var,
             command=self._on_detection_toggle,
             style="Modern.TCheckbutton",
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(anchor="w", pady=2)
+
+        # Cloud inference toggle
+        self.cloud_inference_var = tk.BooleanVar(value=self.settings.detection.use_cloud_inference)
+        ttk.Checkbutton(
+            inner,
+            text="Use Cloud GPU (faster)",
+            variable=self.cloud_inference_var,
+            command=self._on_cloud_toggle,
+            style="Modern.TCheckbutton",
+        ).pack(anchor="w", pady=(2, 10))
 
         ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=5)
 
@@ -428,13 +448,15 @@ class LiveViewerPanel(ttk.Frame):
 
     def _init_pipeline(self, fps: float) -> None:
         """Initialize the ML pipeline components."""
+        log.info(f"Initializing ML pipeline at {fps:.1f} FPS")
         try:
             detection_cfg, calibration_cfg, tracking_cfg, vis_cfg, zone_cfg = self._settings_to_configs()
 
-            # Initialize detector
+            # Initialize detector (use cloud GPU or local CPU)
             self.detector = VehicleDetector(
                 config=detection_cfg,
                 zone_config=zone_cfg,
+                use_cloud=self.settings.detection.use_cloud_inference,
             )
 
             # Initialize tracker
@@ -455,10 +477,12 @@ class LiveViewerPanel(ttk.Frame):
 
             self._pipeline_initialized = True
             self._pipeline_error = None
+            log.info("ML pipeline initialized successfully")
 
         except Exception as e:
             self._pipeline_initialized = False
             self._pipeline_error = str(e)
+            log.error(f"ML pipeline initialization failed: {e}")
 
     def _reset_pipeline(self) -> None:
         """Reset the ML pipeline for a new video."""
@@ -475,6 +499,59 @@ class LiveViewerPanel(ttk.Frame):
         self._frame_times = []
         self._last_fps_update = 0.0
         self._current_fps = 0.0
+        # Reset lens correction cache
+        self._lens_map1 = None
+        self._lens_map2 = None
+
+    def _apply_lens_correction(self, frame: np.ndarray) -> np.ndarray:
+        """Apply lens distortion correction if enabled."""
+        lens = self.settings.lens
+        if not lens.enabled:
+            return frame
+
+        k1 = lens.distortion_k1
+        k2 = lens.distortion_k2
+
+        if k1 == 0 and k2 == 0:
+            return frame
+
+        h, w = frame.shape[:2]
+        frame_size = (w, h)
+
+        # Use cached maps if coefficients and frame size haven't changed
+        if (self._lens_map1 is not None and
+            self._lens_k1 == k1 and
+            self._lens_k2 == k2 and
+            self._lens_frame_size == frame_size):
+            return cv2.remap(frame, self._lens_map1, self._lens_map2, cv2.INTER_LINEAR)
+
+        # Build camera matrix
+        cx = lens.center_x if lens.center_x else w / 2
+        cy = lens.center_y if lens.center_y else h / 2
+        fx = fy = max(w, h)
+
+        camera_matrix = np.array([
+            [fx, 0, cx],
+            [0, fy, cy],
+            [0, 0, 1]
+        ], dtype=np.float32)
+
+        dist_coeffs = np.array([k1, k2, 0, 0, 0], dtype=np.float32)
+
+        # Get optimal new camera matrix
+        new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(
+            camera_matrix, dist_coeffs, (w, h), 1, (w, h)
+        )
+
+        # Compute and cache undistortion maps
+        self._lens_map1, self._lens_map2 = cv2.initUndistortRectifyMap(
+            camera_matrix, dist_coeffs, None, new_camera_matrix, (w, h), cv2.CV_32FC1
+        )
+        self._lens_k1 = k1
+        self._lens_k2 = k2
+        self._lens_frame_size = frame_size
+
+        return cv2.remap(frame, self._lens_map1, self._lens_map2, cv2.INTER_LINEAR)
 
     def _load_video(self):
         """Load a video file."""
@@ -496,6 +573,7 @@ class LiveViewerPanel(ttk.Frame):
         if not path:
             return
 
+        log.info(f"Loading video: {path}")
         try:
             self._stop_video()
             self._reset_pipeline()
@@ -507,6 +585,8 @@ class LiveViewerPanel(ttk.Frame):
 
             self.video_path = path
             info = get_video_info(path)
+            log.debug(f"Video info: {info['width']}x{info['height']} @ {info['fps']:.1f}fps, "
+                      f"{info['total_frames']} frames")
 
             self.video_info_label.configure(
                 text=f"{Path(path).name}\n{info['width']}x{info['height']} @ {info['fps']:.1f}fps\n{info['total_frames']} frames",
@@ -541,6 +621,7 @@ class LiveViewerPanel(ttk.Frame):
             self._show_frame()
 
         except Exception as e:
+            log.error(f"Failed to load video: {e}")
             messagebox.showerror("Error", f"Failed to load video: {e}")
 
     def _set_rtsp_options(self):
@@ -572,6 +653,7 @@ class LiveViewerPanel(ttk.Frame):
             )
             return
 
+        log.info(f"Connecting to RTSP stream: {url}")
         try:
             self._stop_video()
             self._reset_pipeline()
@@ -616,6 +698,8 @@ class LiveViewerPanel(ttk.Frame):
             # Initialize ML pipeline
             self._init_pipeline(fps)
 
+            log.info(f"RTSP connected: {width}x{height} @ {fps:.1f}fps")
+
             # Update UI
             status = f"RTSP Stream\n{width}x{height} @ {fps:.1f}fps"
             if self._pipeline_error:
@@ -639,6 +723,7 @@ class LiveViewerPanel(ttk.Frame):
             self._play_loop()
 
         except Exception as e:
+            log.error(f"RTSP connection failed: {e}")
             self.is_rtsp_mode = False
             self.rtsp_url = None
             self.video_info_label.configure(
@@ -651,6 +736,7 @@ class LiveViewerPanel(ttk.Frame):
 
     def _disconnect_rtsp(self):
         """Disconnect from RTSP stream."""
+        log.info("Disconnecting from RTSP stream")
         self._stop_video()
         self._clear_rtsp_options()
         self.is_rtsp_mode = False
@@ -682,8 +768,11 @@ class LiveViewerPanel(ttk.Frame):
             return
 
         self.rtsp_reconnect_attempts += 1
+        log.warning(f"RTSP stream interrupted, reconnect attempt "
+                    f"{self.rtsp_reconnect_attempts}/{self.rtsp_max_reconnects}")
 
         if self.rtsp_reconnect_attempts > self.rtsp_max_reconnects:
+            log.error(f"RTSP max reconnect attempts ({self.rtsp_max_reconnects}) exceeded")
             self.video_info_label.configure(
                 text=f"Stream lost. Max reconnect attempts ({self.rtsp_max_reconnects}) exceeded.",
                 fg=COLORS["error"],
@@ -723,6 +812,7 @@ class LiveViewerPanel(ttk.Frame):
 
             # Reset reconnect counter on success
             self.rtsp_reconnect_attempts = 0
+            log.info("RTSP stream reconnected successfully")
 
             self.video_info_label.configure(
                 text=f"RTSP Stream (reconnected)\n{int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}",
@@ -782,6 +872,9 @@ class LiveViewerPanel(ttk.Frame):
         ret, frame = self.cap.read()
         if not ret:
             return False
+
+        # Apply lens correction if enabled
+        frame = self._apply_lens_correction(frame)
 
         # Calculate and update FPS display
         current_time = time.time()
@@ -906,10 +999,24 @@ class LiveViewerPanel(ttk.Frame):
 
     def _on_detection_toggle(self):
         """Handle detection enable/disable toggle."""
-        self.settings.detection.detection_enabled = self.detection_enabled_var.get()
+        enabled = self.detection_enabled_var.get()
+        self.settings.detection.detection_enabled = enabled
+        log.info(f"ML detection {'enabled' if enabled else 'disabled'}")
         # Clear cached results when toggling off
-        if not self.detection_enabled_var.get():
+        if not enabled:
             self._last_tracking_result = None
+        self.on_change()
+
+    def _on_cloud_toggle(self):
+        """Handle cloud/local inference toggle."""
+        use_cloud = self.cloud_inference_var.get()
+        self.settings.detection.use_cloud_inference = use_cloud
+        mode = "cloud GPU" if use_cloud else "local CPU"
+        log.info(f"Switching to {mode} inference")
+        # Reinitialize detector with new setting
+        if self._pipeline_initialized and self.video_info:
+            self._reset_pipeline()
+            self._init_pipeline(self.video_info.fps)
         self.on_change()
 
     def _on_conf_change(self, value):

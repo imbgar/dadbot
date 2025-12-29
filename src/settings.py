@@ -94,6 +94,44 @@ class DetectionSettings(BaseModel):
     detection_enabled: bool = True  # Toggle ML detection on/off
     max_inference_fps: int = 15  # Cap inference rate for performance
 
+    # Cloud inference (uses Roboflow GPU servers)
+    use_cloud_inference: bool = True  # Use cloud GPU instead of local CPU
+
+
+class LensCalibrationSettings(BaseModel):
+    """Lens distortion calibration settings."""
+
+    enabled: bool = False
+    # Radial distortion coefficient (negative = barrel, positive = pincushion)
+    # Typical range: -0.5 to 0.5, with most cameras needing -0.1 to -0.3
+    distortion_k1: float = 0.0
+    distortion_k2: float = 0.0  # Secondary coefficient (usually smaller)
+
+    # Camera preset (for quick setup)
+    camera_preset: str = "custom"  # custom, wyze_v3, reolink, gopro_wide, etc.
+
+    # Reference points for visual calibration (points that should be collinear)
+    reference_points: list[list[int]] = Field(default_factory=list)
+
+    # Frame center override (defaults to frame center if not set)
+    center_x: int | None = None
+    center_y: int | None = None
+
+
+# Camera preset distortion values (k1, k2)
+CAMERA_PRESETS: dict[str, tuple[float, float]] = {
+    "custom": (0.0, 0.0),
+    "wyze_v3": (-0.18, 0.02),
+    "wyze_v2": (-0.22, 0.03),
+    "reolink_wide": (-0.25, 0.04),
+    "hikvision_wide": (-0.20, 0.02),
+    "amcrest_wide": (-0.23, 0.03),
+    "gopro_wide": (-0.35, 0.08),
+    "gopro_linear": (-0.05, 0.0),
+    "generic_wide": (-0.20, 0.02),
+    "generic_standard": (-0.08, 0.0),
+}
+
 
 class TrackingSettings(BaseModel):
     """Vehicle tracking settings."""
@@ -148,6 +186,7 @@ class AppSettings(BaseModel):
 
     zone: ZoneSettings = Field(default_factory=ZoneSettings)
     calibration: CalibrationSettings = Field(default_factory=CalibrationSettings)
+    lens: LensCalibrationSettings = Field(default_factory=LensCalibrationSettings)
     detection: DetectionSettings = Field(default_factory=DetectionSettings)
     tracking: TrackingSettings = Field(default_factory=TrackingSettings)
     visualization: VisualizationSettings = Field(default_factory=VisualizationSettings)

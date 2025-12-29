@@ -1,9 +1,127 @@
-"""Utility functions for the traffic monitoring system."""
+"""Utility functions for the traffic monitoring system.
 
+Includes:
+- Video utilities (extract frames, get info)
+- Centralized logging configuration for DadBot
+
+All application modules should use get_logger() to obtain a child logger.
+
+Example:
+    from src.utils import get_logger
+
+    log = get_logger("detector")
+    log.info("Initializing detector...")
+    log.debug(f"Model: {model_id}")
+"""
+
+import logging
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+
+# Root logger for the application
+logger = logging.getLogger("dadbot")
+logger.setLevel(logging.DEBUG)
+
+# Global formatter for consistent log format
+formatter = logging.Formatter(
+    fmt="%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+# Prevent duplicate handlers if module is reloaded
+if not logger.handlers:
+    # Console handler - outputs to stdout
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+
+def get_logger(name: str) -> logging.Logger:
+    """Get a child logger for a module.
+
+    Args:
+        name: Module name (e.g., "detector", "viewer", "tracker")
+
+    Returns:
+        A logger instance named "dadbot.{name}"
+
+    Example:
+        log = get_logger("detector")
+        log.info("Detection started")
+    """
+    return logging.getLogger(f"dadbot.{name}")
+
+
+class GUILogHandler(logging.Handler):
+    """Custom handler that sends log messages to a GUI callback.
+
+    Used to display log messages in the application's console panel.
+    """
+
+    def __init__(self, callback: Callable[[str], None]):
+        """Initialize with a callback function.
+
+        Args:
+            callback: Function that receives formatted log messages
+        """
+        super().__init__()
+        self.callback = callback
+        self.setFormatter(formatter)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record by calling the callback with formatted message."""
+        try:
+            msg = self.format(record)
+            self.callback(msg)
+        except Exception:
+            # Silently ignore errors to prevent logging loops
+            pass
+
+
+def add_gui_handler(callback: Callable[[str], None]) -> GUILogHandler:
+    """Add a GUI handler to receive log messages.
+
+    Args:
+        callback: Function to receive formatted log messages
+
+    Returns:
+        The created handler (keep reference for removal)
+
+    Example:
+        def on_log(msg: str):
+            console.append(msg)
+
+        handler = add_gui_handler(on_log)
+        # Later: remove_gui_handler(handler)
+    """
+    handler = GUILogHandler(callback)
+    handler.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    return handler
+
+
+def remove_gui_handler(handler: GUILogHandler) -> None:
+    """Remove a previously added GUI handler.
+
+    Args:
+        handler: The handler returned by add_gui_handler()
+    """
+    logger.removeHandler(handler)
+
+
+# =============================================================================
+# Video Utilities
+# =============================================================================
 
 
 def extract_first_frame(video_path: str | Path) -> np.ndarray:

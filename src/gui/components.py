@@ -270,7 +270,7 @@ class SettingsPanel(ttk.LabelFrame):
 class ConsoleOutput(ttk.Frame):
     """Console-style output panel with scrolling."""
 
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, height: int = 10, **kwargs):
         super().__init__(parent, style="Card.TFrame", **kwargs)
 
         # Create text widget with scrollbar
@@ -287,6 +287,7 @@ class ConsoleOutput(ttk.Frame):
             pady=10,
             wrap="word",
             state="disabled",
+            height=height,
         )
 
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.text.yview)

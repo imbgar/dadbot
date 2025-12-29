@@ -11,9 +11,13 @@ from src.gui.components import ActionButton, ConsoleOutput, ScrollableFrame, Set
 from src.gui.styles import COLORS, FONTS, configure_styles
 from src.gui.panels.zone_panel import ZoneDefinitionPanel
 from src.gui.panels.calibration_panel import CalibrationPanel
+from src.gui.panels.lens_panel import LensCalibrationPanel
 from src.gui.panels.viewer_panel import LiveViewerPanel
 from src.gui.panels.processor_panel import ProcessorPanel
 from src.settings import AppSettings, load_or_create_settings
+from src.utils import get_logger, add_gui_handler, remove_gui_handler
+
+log = get_logger("app")
 
 # Get the assets directory
 ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
@@ -49,6 +53,13 @@ class DadBotApp:
 
         # Track active panel
         self.active_panel = None
+
+        # Console state
+        self.console_visible = False
+        self._gui_log_handler = None
+        self._setup_gui_logging()
+
+        log.info("DadBot Traffic Monitor started")
 
     def _create_layout(self):
         """Create the main application layout."""
@@ -107,10 +118,19 @@ class DadBotApp:
             command=self._show_zone_panel,
         ).pack(fill="x", pady=5)
 
-        # Calibration Button
+        # Lens Calibration Button
         ActionButton(
             nav_frame,
-            title="Calibration",
+            title="Lens Calibration",
+            description="Fix barrel distortion",
+            icon="🔍",
+            command=self._show_lens_panel,
+        ).pack(fill="x", pady=5)
+
+        # Distance Calibration Button
+        ActionButton(
+            nav_frame,
+            title="Distance Calibration",
             description="Set distance measurements",
             icon="📏",
             command=self._show_calibration_panel,
@@ -156,9 +176,29 @@ class DadBotApp:
         self._show_welcome()
 
     def _create_status_bar(self):
-        """Create the status bar."""
-        self.status_bar = StatusBar(self.root)
-        self.status_bar.pack(side="bottom", fill="x", padx=10, pady=5)
+        """Create the status bar with console toggle."""
+        # Console output panel (hidden by default)
+        self.console_frame = ttk.Frame(self.root, style="Card.TFrame")
+        self.console_output = ConsoleOutput(self.console_frame, height=150)
+        self.console_output.pack(fill="both", expand=True)
+
+        # Status bar container
+        status_container = ttk.Frame(self.root, style="Card.TFrame")
+        status_container.pack(side="bottom", fill="x", padx=10, pady=5)
+
+        # Console toggle button (left side)
+        self.console_toggle_btn = ttk.Button(
+            status_container,
+            text="▼ Console",
+            command=self._toggle_console,
+            style="Action.TButton",
+            width=12,
+        )
+        self.console_toggle_btn.pack(side="left", padx=(0, 10))
+
+        # Status bar (rest of the row)
+        self.status_bar = StatusBar(status_container)
+        self.status_bar.pack(side="left", fill="x", expand=True)
 
         self.status_bar.add_section("status", "Ready", width=25)
         self.status_bar.add_section("video", "No video loaded", width=35)
@@ -225,7 +265,20 @@ class DadBotApp:
             self._update_save_status,
         )
         self.active_panel.pack(fill="both", expand=True)
-        self.status_bar.update_section("status", "Calibration")
+        self.status_bar.update_section("status", "Distance Calibration")
+        self.status_bar.update_section("save_status", "")
+
+    def _show_lens_panel(self):
+        """Show the lens calibration panel."""
+        self._clear_content()
+        self.active_panel = LensCalibrationPanel(
+            self.content_frame,
+            self.settings,
+            self._on_settings_changed,
+            self._update_save_status,
+        )
+        self.active_panel.pack(fill="both", expand=True)
+        self.status_bar.update_section("status", "Lens Calibration")
         self.status_bar.update_section("save_status", "")
 
     def _show_viewer_panel(self):
@@ -331,6 +384,46 @@ class DadBotApp:
         """Update the save status in the status bar."""
         self.status_bar.update_section("save_status", message)
 
+    def _toggle_console(self):
+        """Toggle the console output panel visibility."""
+        if self.console_visible:
+            self.console_frame.pack_forget()
+            self.console_toggle_btn.configure(text="▼ Console")
+            self.console_visible = False
+            log.debug("Console hidden")
+        else:
+            # Pack console above the status bar
+            self.console_frame.pack(side="bottom", fill="x", padx=10, pady=(5, 0), before=self.console_toggle_btn.master)
+            self.console_toggle_btn.configure(text="▲ Console")
+            self.console_visible = True
+            log.debug("Console shown")
+
+    def _setup_gui_logging(self):
+        """Set up the GUI log handler to display logs in the console panel."""
+        def on_log_message(msg: str):
+            # Determine tag based on log level
+            tag = "info"
+            if "[ERROR]" in msg:
+                tag = "error"
+            elif "[WARNING]" in msg:
+                tag = "warning"
+            elif "[DEBUG]" in msg:
+                tag = "muted"
+
+            # Schedule write on main thread to avoid Tkinter threading issues
+            try:
+                self.root.after(0, lambda: self.console_output.writeln(msg, tag))
+            except Exception:
+                pass  # Ignore if widget is destroyed
+
+        self._gui_log_handler = add_gui_handler(on_log_message)
+
+    def _cleanup_logging(self):
+        """Clean up the GUI log handler."""
+        if self._gui_log_handler:
+            remove_gui_handler(self._gui_log_handler)
+            self._gui_log_handler = None
+
     def _load_logo(self):
         """Load and display the logo image."""
         png_path = ASSETS_DIR / "dadbot-logo.png"
@@ -413,7 +506,11 @@ class DadBotApp:
 
     def run(self):
         """Start the application main loop."""
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            self._cleanup_logging()
+            log.info("DadBot Traffic Monitor stopped")
 
 
 def main():

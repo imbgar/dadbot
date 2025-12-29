@@ -106,6 +106,9 @@ class LiveViewerPanel(ttk.Frame):
         self._pipeline_fps_monitor = sv.FPSMonitor()
         self._use_inference_pipeline = INFERENCE_PIPELINE_AVAILABLE
 
+        # Detection controls list (populated in _create_detection_section)
+        self._detection_controls: list = []
+
         self._create_layout()
 
     def _create_layout(self):
@@ -365,25 +368,55 @@ class LiveViewerPanel(ttk.Frame):
         inner = ttk.Frame(section, style="CardInner.TFrame")
         inner.pack(fill="x", padx=10, pady=10)
 
+        # Clear and populate detection controls list for enabling/disabling during stream
+        self._detection_controls.clear()
+
         # Detection toggle
         self.detection_enabled_var = tk.BooleanVar(value=self.settings.detection.detection_enabled)
-        ttk.Checkbutton(
+        detection_cb = ttk.Checkbutton(
             inner,
             text="Enable ML Detection",
             variable=self.detection_enabled_var,
             command=self._on_detection_toggle,
             style="Modern.TCheckbutton",
-        ).pack(anchor="w", pady=2)
+        )
+        detection_cb.pack(anchor="w", pady=2)
+        self._detection_controls.append(detection_cb)
 
-        # Cloud inference toggle
-        self.cloud_inference_var = tk.BooleanVar(value=self.settings.detection.use_cloud_inference)
-        ttk.Checkbutton(
+        # Inference mode toggle (InferencePipeline vs OpenCV)
+        self.use_inference_pipeline_var = tk.BooleanVar(value=self._use_inference_pipeline)
+        pipeline_cb = ttk.Checkbutton(
             inner,
-            text="Use Cloud GPU (faster)",
+            text="Use InferencePipeline (real-time)",
+            variable=self.use_inference_pipeline_var,
+            command=self._on_pipeline_mode_toggle,
+            style="Modern.TCheckbutton",
+        )
+        pipeline_cb.pack(anchor="w", pady=2)
+        self._detection_controls.append(pipeline_cb)
+
+        # Cloud inference toggle (only for OpenCV mode)
+        self.cloud_inference_var = tk.BooleanVar(value=self.settings.detection.use_cloud_inference)
+        self.cloud_inference_cb = ttk.Checkbutton(
+            inner,
+            text="Use Cloud GPU (OpenCV mode only)",
             variable=self.cloud_inference_var,
             command=self._on_cloud_toggle,
             style="Modern.TCheckbutton",
-        ).pack(anchor="w", pady=(2, 10))
+        )
+        self.cloud_inference_cb.pack(anchor="w", pady=(2, 10))
+        self._detection_controls.append(self.cloud_inference_cb)
+
+        # Hint about modes
+        self.mode_hint_label = tk.Label(
+            inner,
+            text="InferencePipeline: Local model, optimized for RTSP\nOpenCV: Frame-by-frame, supports cloud GPU",
+            font=FONTS["small"],
+            fg=COLORS["text_muted"],
+            bg=COLORS["bg_medium"],
+            justify="left",
+        )
+        self.mode_hint_label.pack(anchor="w", pady=(0, 5))
 
         ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=5)
 
@@ -404,7 +437,7 @@ class LiveViewerPanel(ttk.Frame):
         )
         self.conf_label.pack(side="right")
 
-        conf_scale = ttk.Scale(
+        self.conf_scale = ttk.Scale(
             conf_frame,
             from_=0.1,
             to=0.9,
@@ -412,7 +445,8 @@ class LiveViewerPanel(ttk.Frame):
             orient="horizontal",
             command=self._on_conf_change,
         )
-        conf_scale.pack(side="left", fill="x", expand=True)
+        self.conf_scale.pack(side="left", fill="x", expand=True)
+        self._detection_controls.append(self.conf_scale)
 
         # Speed limit
         ttk.Label(inner, text="Speed Limit (MPH):", style="Body.TLabel").pack(anchor="w", pady=(10, 0))
@@ -421,12 +455,15 @@ class LiveViewerPanel(ttk.Frame):
         speed_frame.pack(fill="x", pady=5)
 
         self.speed_var = tk.StringVar(value=str(int(self.settings.tracking.speed_limit_mph)))
-        speed_entry = ttk.Entry(speed_frame, textvariable=self.speed_var, width=8, font=FONTS["mono"])
-        speed_entry.pack(side="left")
-        speed_entry.bind("<Return>", self._on_speed_change)
-        speed_entry.bind("<FocusOut>", self._on_speed_change)
+        self.speed_entry = ttk.Entry(speed_frame, textvariable=self.speed_var, width=8, font=FONTS["mono"])
+        self.speed_entry.pack(side="left")
+        self.speed_entry.bind("<Return>", self._on_speed_change)
+        self.speed_entry.bind("<FocusOut>", self._on_speed_change)
 
         ttk.Label(speed_frame, text="mph", style="Muted.TLabel").pack(side="left", padx=5)
+
+        # Update cloud toggle state based on pipeline mode
+        self._update_cloud_toggle_state()
 
     def _settings_to_configs(self) -> tuple[
         DetectionConfig, CalibrationConfig, TrackingConfig, VisualizationConfig, ZoneConfig
@@ -742,18 +779,12 @@ class LiveViewerPanel(ttk.Frame):
                         print(f"[PREDICTION ERROR] {e}")
                         log.error(f"Exception in prediction callback: {e}", exc_info=True)
 
-                # Also add on_video_frame callback for debugging
-                def on_video_frame_wrapper(frame):
-                    """Debug callback to see if video frames are received."""
-                    print(f"[VIDEO_FRAME] on_video_frame called: frame_type={type(frame)}")
-
                 log.info(f"Creating InferencePipeline with model={model_id}, video={rtsp_url}")
 
                 self._inference_pipeline = InferencePipeline.init(
                     model_id=model_id,
                     video_reference=rtsp_url,
                     on_prediction=on_prediction_wrapper,
-                    on_video_frame=on_video_frame_wrapper,
                     confidence=self.settings.detection.confidence_threshold,
                     iou_threshold=self.settings.detection.iou_threshold,
                     api_key=api_key,
@@ -1083,6 +1114,9 @@ class LiveViewerPanel(ttk.Frame):
                     self.rtsp_connect_btn.configure(state="disabled")
                     self.rtsp_disconnect_btn.configure(state="normal")
 
+                    # Disable detection controls while streaming
+                    self._set_detection_controls_state(False)
+
                     # Save URL for next session
                     self.settings.last_rtsp_url = url
                     self.on_change()
@@ -1144,6 +1178,9 @@ class LiveViewerPanel(ttk.Frame):
             self.rtsp_connect_btn.configure(state="disabled")
             self.rtsp_disconnect_btn.configure(state="normal")
 
+            # Disable detection controls while streaming
+            self._set_detection_controls_state(False)
+
             # Save URL for next session
             self.settings.last_rtsp_url = url
             self.on_change()
@@ -1179,6 +1216,10 @@ class LiveViewerPanel(ttk.Frame):
         # Update button states
         self.rtsp_connect_btn.configure(state="normal")
         self.rtsp_disconnect_btn.configure(state="disabled")
+
+        # Re-enable detection controls
+        self._set_detection_controls_state(True)
+        self._update_cloud_toggle_state()
 
         self.video_info_label.configure(
             text="Disconnected",
@@ -1452,6 +1493,44 @@ class LiveViewerPanel(ttk.Frame):
             self._reset_pipeline()
             self._init_pipeline(self.video_info.fps)
         self.on_change()
+
+    def _on_pipeline_mode_toggle(self):
+        """Handle InferencePipeline vs OpenCV mode toggle."""
+        use_pipeline = self.use_inference_pipeline_var.get()
+        self._use_inference_pipeline = use_pipeline
+        mode = "InferencePipeline" if use_pipeline else "OpenCV"
+        log.info(f"Switching to {mode} mode")
+        self._update_cloud_toggle_state()
+        self.on_change()
+
+    def _update_cloud_toggle_state(self):
+        """Update cloud toggle state based on pipeline mode."""
+        if hasattr(self, 'cloud_inference_cb'):
+            # Cloud GPU only works in OpenCV mode
+            if self.use_inference_pipeline_var.get():
+                self.cloud_inference_cb.configure(state="disabled")
+            else:
+                self.cloud_inference_cb.configure(state="normal")
+
+    def _set_detection_controls_state(self, enabled: bool):
+        """Enable or disable detection controls during streaming.
+
+        Args:
+            enabled: True to enable controls, False to disable.
+        """
+        state = "normal" if enabled else "disabled"
+        for control in self._detection_controls:
+            try:
+                control.configure(state=state)
+            except tk.TclError:
+                pass  # Some widgets may not support state
+
+        # Also update the hint label appearance
+        if hasattr(self, 'mode_hint_label'):
+            if enabled:
+                self.mode_hint_label.configure(fg=COLORS["text_muted"])
+            else:
+                self.mode_hint_label.configure(fg=COLORS["text_muted"])
 
     def _on_conf_change(self, value):
         """Handle confidence threshold change."""

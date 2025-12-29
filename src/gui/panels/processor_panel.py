@@ -99,6 +99,27 @@ class ProcessorPanel(ttk.Frame):
             style="Modern.TCheckbutton",
         ).pack(side="left", padx=10)
 
+        # Inference mode toggle
+        self.use_cloud_var = tk.BooleanVar(value=self.settings.detection.use_cloud_inference)
+        ttk.Checkbutton(
+            options_row,
+            text="Use Cloud GPU",
+            variable=self.use_cloud_var,
+            style="Modern.TCheckbutton",
+        ).pack(side="left", padx=10)
+
+        # Frame skip option for faster processing
+        ttk.Label(options_row, text="Process FPS:", style="Body.TLabel").pack(side="left", padx=(20, 5))
+        self.process_fps_var = tk.StringVar(value="5")
+        fps_combo = ttk.Combobox(
+            options_row,
+            textvariable=self.process_fps_var,
+            values=["1", "2", "3", "5", "10", "15", "30", "All"],
+            width=5,
+            state="readonly",
+        )
+        fps_combo.pack(side="left")
+
         # Action buttons row
         action_row = ttk.Frame(settings_inner, style="CardInner.TFrame")
         action_row.pack(fill="x", pady=10)
@@ -148,10 +169,11 @@ class ProcessorPanel(ttk.Frame):
         self.console.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Initial message
-        self.console.writeln("DadBot Traffic Monitor - Video Processor", "accent")
-        self.console.writeln("=" * 50, "muted")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.console.writeln(f"{timestamp} │ DadBot Traffic Monitor - Video Processor", "accent")
+        self.console.writeln(f"{timestamp} │ {'═' * 45}", "muted")
         self.console.writeln("")
-        self.console.writeln("Select a video file and click 'Start Processing' to begin.", "info")
+        self.console.writeln(f"{timestamp} │ Select a video file and click 'Start Processing' to begin.", "info")
         self.console.writeln("")
 
         # Start checking output queue
@@ -225,13 +247,23 @@ class ProcessorPanel(ttk.Frame):
 
     def _process_video(self):
         """Process video in background thread."""
+        import time
+        start_time = time.time()
+        start_timestamp = datetime.now()
+
         try:
             video_path = self.video_path_var.get()
-            output_dir = Path(self.output_path_var.get())
+            video_name = Path(video_path).stem
+
+            # Create timestamped run directory: output/video_name_YYYYMMDD_HHMMSS/
+            run_dirname = f"{video_name}_{start_timestamp.strftime('%Y%m%d_%H%M%S')}"
+            base_output_dir = Path(self.output_path_var.get())
+            output_dir = base_output_dir / run_dirname
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # Import processing modules
-            self.output_queue.put(("info", "Loading modules..."))
+            self.output_queue.put(("info", f"Started at {start_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"))
+            self.output_queue.put(("info", f"Output directory: {output_dir}"))
 
             import cv2
             import supervision as sv
@@ -296,14 +328,29 @@ class ProcessorPanel(ttk.Frame):
             self.output_queue.put(("info", f"Loading video: {video_path}"))
             video_info = sv.VideoInfo.from_video_path(video_path)
             self.output_queue.put(("info", f"Resolution: {video_info.resolution_wh}"))
-            self.output_queue.put(("info", f"FPS: {video_info.fps}"))
+            self.output_queue.put(("info", f"Native FPS: {video_info.fps}"))
             self.output_queue.put(("info", f"Total frames: {video_info.total_frames}"))
+
+            # Calculate frame skip interval based on target process FPS
+            target_fps_str = self.process_fps_var.get()
+            if target_fps_str == "All":
+                frame_skip = 1  # Process every frame
+                target_fps = video_info.fps
+            else:
+                target_fps = float(target_fps_str)
+                frame_skip = max(1, int(video_info.fps / target_fps))
+
+            frames_to_process = video_info.total_frames // frame_skip
+            self.output_queue.put(("info", f"Process FPS: {target_fps} (skip every {frame_skip} frames)"))
+            self.output_queue.put(("info", f"Frames to process: {frames_to_process}"))
             self.output_queue.put(("info", f"Pixels per foot: {calibration.pixels_per_foot:.2f}"))
             self.output_queue.put(("info", ""))
 
             # Initialize components
-            self.output_queue.put(("info", "Initializing detector..."))
-            detector = VehicleDetector(detection, zone_config=zone)
+            use_cloud = self.use_cloud_var.get()
+            mode = "cloud GPU" if use_cloud else "local CPU"
+            self.output_queue.put(("info", f"Initializing detector ({mode})..."))
+            detector = VehicleDetector(detection, zone_config=zone, use_cloud=use_cloud)
 
             self.output_queue.put(("info", "Initializing tracker..."))
             tracker = VehicleTracker(
@@ -323,12 +370,12 @@ class ProcessorPanel(ttk.Frame):
 
             # Start session
             report_path = reporter.start_session()
-            self.output_queue.put(("success", f"Reports: {report_path}"))
+            self.output_queue.put(("success", f"Reports: {Path(report_path).name}"))
 
             if visualization.save_video:
-                output_video = output_dir / "annotated_output.mp4"
+                output_video = output_dir / f"{video_name}_annotated.mp4"
                 visualizer.start_video_output(output_video)
-                self.output_queue.put(("success", f"Video: {output_video}"))
+                self.output_queue.put(("success", f"Video: {output_video.name}"))
 
             self.output_queue.put(("info", ""))
             self.output_queue.put(("accent", "Processing started..."))
@@ -337,37 +384,61 @@ class ProcessorPanel(ttk.Frame):
             # Process frames
             frame_generator = sv.get_video_frames_generator(source_path=video_path)
             total_frames = video_info.total_frames
+            processed_count = 0
 
             for frame_index, frame in enumerate(frame_generator):
                 if not self.processing:
                     self.output_queue.put(("warning", "Processing stopped by user"))
                     break
 
-                # Detect, track, record
-                detection_result = detector.detect(frame, frame_index)
-                tracking_result = tracker.update(detection_result)
+                # Skip frames based on frame_skip interval
+                if frame_index % frame_skip != 0:
+                    continue
 
-                for vehicle in tracking_result.tracked_vehicles.values():
-                    reporter.record_vehicle(vehicle)
+                processed_count += 1
 
-                # Visualize
-                annotated_frame = visualizer.annotate_frame(frame, tracking_result)
+                try:
+                    # Detect, track, record
+                    detection_result = detector.detect(frame, frame_index)
+                    tracking_result = tracker.update(detection_result)
 
-                if visualization.save_video:
-                    visualizer.write_frame(annotated_frame)
+                    for vehicle in tracking_result.tracked_vehicles.values():
+                        reporter.record_vehicle(vehicle)
 
-                # Log progress periodically (every 50 frames to reduce overhead)
-                if frame_index > 0 and frame_index % 50 == 0:
-                    progress = (frame_index / total_frames) * 100
+                    # Visualize
+                    annotated_frame = visualizer.annotate_frame(frame, tracking_result)
+
+                    if visualization.save_video:
+                        visualizer.write_frame(annotated_frame)
+
+                except Exception as e:
+                    # Log detection errors but continue processing
+                    if processed_count == 1:
+                        self.output_queue.put(("error", f"Detection error on first frame: {e}"))
+                        self.output_queue.put(("warning", "Check your API key and network connection"))
+                        raise  # Re-raise to stop processing if first frame fails
+                    elif processed_count % 50 == 0:
+                        self.output_queue.put(("warning", f"Detection error on frame {frame_index}: {e}"))
+                    continue
+
+                # Log progress periodically (every 15 processed frames for smoother updates)
+                if processed_count > 0 and processed_count % 15 == 0:
+                    progress = (processed_count / frames_to_process) * 100
                     self.output_queue.put(("progress", progress))
 
-                    if frame_index % 100 == 0:
+                    if processed_count % 50 == 0:
+                        elapsed = time.time() - start_time
+                        fps = processed_count / elapsed if elapsed > 0 else 0
+                        eta_seconds = (frames_to_process - processed_count) / fps if fps > 0 else 0
+                        eta_str = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s" if eta_seconds > 0 else "calculating..."
+
                         summary = reporter.get_summary()
                         self.output_queue.put((
                             "info",
-                            f"Frame {frame_index}/{total_frames} | "
-                            f"Vehicles: {summary.get('vehicles_counted', 0)} | "
-                            f"Violations: {summary.get('violations', 0)}"
+                            f"[{progress:5.1f}%] Frame {processed_count}/{frames_to_process} │ "
+                            f"Vehicles: {summary.get('vehicles_counted', 0)} │ "
+                            f"Violations: {summary.get('violations', 0)} │ "
+                            f"ETA: {eta_str}"
                         ))
 
             # Finalize
@@ -377,15 +448,39 @@ class ProcessorPanel(ttk.Frame):
             final_report = reporter.end_session()
             visualizer.cleanup()
 
-            if final_report:
-                self.output_queue.put(("success", f"Total vehicles: {final_report['total_vehicles']}"))
-                self.output_queue.put(("success", f"Eastbound: {final_report['vehicles_by_direction'].get('eastbound', 0)}"))
-                self.output_queue.put(("success", f"Westbound: {final_report['vehicles_by_direction'].get('westbound', 0)}"))
-                self.output_queue.put(("success", f"Top speed: {final_report['top_speed_mph']} MPH"))
-                self.output_queue.put(("success", f"Violations: {len(final_report['speed_violations'])}"))
+            # Calculate timing
+            end_time = time.time()
+            end_timestamp = datetime.now()
+            elapsed_seconds = end_time - start_time
+            elapsed_min = int(elapsed_seconds // 60)
+            elapsed_sec = int(elapsed_seconds % 60)
+            avg_fps = processed_count / elapsed_seconds if elapsed_seconds > 0 else 0
 
             self.output_queue.put(("info", ""))
-            self.output_queue.put(("accent", "Processing complete!"))
+            self.output_queue.put(("accent", "═" * 50))
+            self.output_queue.put(("accent", "PROCESSING COMPLETE"))
+            self.output_queue.put(("accent", "═" * 50))
+            self.output_queue.put(("info", ""))
+
+            # Timing summary
+            self.output_queue.put(("info", "TIMING"))
+            self.output_queue.put(("info", f"  Start:   {start_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"))
+            self.output_queue.put(("info", f"  End:     {end_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"))
+            self.output_queue.put(("info", f"  Elapsed: {elapsed_min}m {elapsed_sec}s"))
+            self.output_queue.put(("info", f"  Frames:  {processed_count}/{total_frames} (1:{frame_skip} sampling)"))
+            self.output_queue.put(("info", f"  Avg FPS: {avg_fps:.1f}"))
+            self.output_queue.put(("info", ""))
+
+            # Results summary
+            if final_report:
+                self.output_queue.put(("info", "RESULTS"))
+                self.output_queue.put(("success", f"  Total vehicles: {final_report['total_vehicles']}"))
+                self.output_queue.put(("success", f"  Eastbound:      {final_report['vehicles_by_direction'].get('eastbound', 0)}"))
+                self.output_queue.put(("success", f"  Westbound:      {final_report['vehicles_by_direction'].get('westbound', 0)}"))
+                self.output_queue.put(("success", f"  Top speed:      {final_report['top_speed_mph']} MPH"))
+                self.output_queue.put(("success", f"  Violations:     {len(final_report['speed_violations'])}"))
+
+            self.output_queue.put(("info", ""))
             self.output_queue.put(("progress", 100))
 
         except Exception as e:
@@ -410,7 +505,9 @@ class ProcessorPanel(ttk.Frame):
                     self.start_btn.configure(state="normal")
                     self.stop_btn.configure(state="disabled")
                 else:
-                    self.console.writeln(msg, msg_type)
+                    # Add timestamp to console messages
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    self.console.writeln(f"{timestamp} │ {msg}", msg_type)
 
         except queue.Empty:
             pass

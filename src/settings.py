@@ -86,7 +86,8 @@ class CalibrationSettings(BaseModel):
 class DetectionSettings(BaseModel):
     """Object detection settings."""
 
-    model_id: str = "rfdetr-medium"
+    # RF-DETR model sizes: rfdetr-nano (fastest), rfdetr-small, rfdetr-medium, rfdetr-large (most accurate)
+    model_id: str = "rfdetr-nano"
     confidence_threshold: float = 0.3
     iou_threshold: float = 0.5
 
@@ -233,8 +234,9 @@ class AppSettings(BaseModel):
 
     @classmethod
     def get_default_path(cls) -> Path:
-        """Get the default settings file path."""
-        return Path.home() / ".dadbot" / "settings.yaml"
+        """Get the default settings file path (./config/settings.yaml)."""
+        from src.utils import CONFIG_DIR
+        return CONFIG_DIR / "settings.yaml"
 
     def _to_serializable(self, obj: Any) -> Any:
         """Convert object to YAML-serializable format."""

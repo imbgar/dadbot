@@ -29,23 +29,48 @@ import numpy as np
 # Logging Configuration
 # =============================================================================
 
-# Log directory - use ~/.dadbot/logs/
-LOG_DIR = Path.home() / ".dadbot" / "logs"
+# Project root directory (parent of src/)
+PROJECT_ROOT = Path(__file__).parent.parent
+
+# Log directory - use ./logs/ in project root
+LOGS_BASE_DIR = PROJECT_ROOT / "logs"
+LOGS_BASE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Create timestamped session directory for this execution
+SESSION_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+LOG_DIR = LOGS_BASE_DIR / SESSION_TIMESTAMP
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# Create/update 'latest' symlink pointing to current session
+LATEST_LINK = LOGS_BASE_DIR / "latest"
+try:
+    if LATEST_LINK.is_symlink():
+        LATEST_LINK.unlink()
+    elif LATEST_LINK.exists():
+        # If it's a regular file/dir, remove it
+        import shutil
+        shutil.rmtree(LATEST_LINK) if LATEST_LINK.is_dir() else LATEST_LINK.unlink()
+    LATEST_LINK.symlink_to(SESSION_TIMESTAMP)
+except OSError:
+    pass  # Symlinks may not work on all systems
+
+# Config directory - use ./config/ in project root
+CONFIG_DIR = PROJECT_ROOT / "config"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Root logger for the application
 logger = logging.getLogger("dadbot")
 logger.setLevel(logging.DEBUG)
 
-# Global formatter for consistent log format
-formatter = logging.Formatter(
-    fmt="%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s",
+# Clean file formatter with full timestamp
+file_formatter = logging.Formatter(
+    fmt="%(asctime)s │ %(levelname)s │ %(name)s │ %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# Shorter formatter for console (less verbose)
+# Console formatter - cleaner with timestamp
 console_formatter = logging.Formatter(
-    fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    fmt="%(asctime)s │ %(levelname)s │ %(message)s",
     datefmt="%H:%M:%S",
 )
 
@@ -57,42 +82,27 @@ if not logger.handlers:
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
-    # Main log file - all logs (rotating, 5MB max, keep 3 backups)
+    # Main log file - all logs
     main_log_file = LOG_DIR / "dadbot.log"
-    file_handler = RotatingFileHandler(
-        main_log_file,
-        maxBytes=5 * 1024 * 1024,  # 5MB
-        backupCount=3,
-        encoding="utf-8",
-    )
+    file_handler = logging.FileHandler(main_log_file, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
 
     # Viewer-specific log file for debugging pipeline issues
     viewer_log_file = LOG_DIR / "viewer.log"
-    viewer_handler = RotatingFileHandler(
-        viewer_log_file,
-        maxBytes=2 * 1024 * 1024,  # 2MB
-        backupCount=2,
-        encoding="utf-8",
-    )
+    viewer_handler = logging.FileHandler(viewer_log_file, encoding="utf-8")
     viewer_handler.setLevel(logging.DEBUG)
-    viewer_handler.setFormatter(formatter)
+    viewer_handler.setFormatter(file_formatter)
     # Only capture viewer logs
     viewer_handler.addFilter(lambda record: "viewer" in record.name)
     logger.addHandler(viewer_handler)
 
     # Inference-specific log file
     inference_log_file = LOG_DIR / "inference.log"
-    inference_handler = RotatingFileHandler(
-        inference_log_file,
-        maxBytes=2 * 1024 * 1024,  # 2MB
-        backupCount=2,
-        encoding="utf-8",
-    )
+    inference_handler = logging.FileHandler(inference_log_file, encoding="utf-8")
     inference_handler.setLevel(logging.DEBUG)
-    inference_handler.setFormatter(formatter)
+    inference_handler.setFormatter(file_formatter)
     # Capture inference-related logs
     inference_handler.addFilter(
         lambda record: any(x in record.name.lower() for x in ["inference", "detector", "pipeline"])
@@ -100,7 +110,7 @@ if not logger.handlers:
     logger.addHandler(inference_handler)
 
     # Log startup info
-    logger.info(f"Logging initialized. Log directory: {LOG_DIR}")
+    logger.info(f"DadBot started - Logs: {LOG_DIR}")
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -133,7 +143,7 @@ class GUILogHandler(logging.Handler):
         """
         super().__init__()
         self.callback = callback
-        self.setFormatter(formatter)
+        self.setFormatter(console_formatter)
 
     def emit(self, record: logging.LogRecord) -> None:
         """Emit a log record by calling the callback with formatted message."""

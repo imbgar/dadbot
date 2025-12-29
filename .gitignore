@@ -3,6 +3,7 @@
 
 scratch/
 reference_footage/
+supervision/
 
 # Python
 __pycache__/
@@ -54,6 +55,12 @@ output/
 *.avi
 *.mov
 *.jsonl
+
+# Logs
+logs/
+
+# Config (keep examples, ignore user settings)
+config/settings.yaml
 
 # macOS
 .DS_Store

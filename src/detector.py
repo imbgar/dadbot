@@ -180,7 +180,38 @@ class VehicleDetector:
                         pred["width"] *= scale_back
                         pred["height"] *= scale_back
         else:
-            results = self.model.infer(frame, confidence=self.config.confidence_threshold)
+            # Local inference - also downscale for faster processing
+            h, w = frame.shape[:2]
+            max_dim = 640  # RF-DETR works well at 640
+            if max(h, w) > max_dim:
+                scale = max_dim / max(h, w)
+                new_w, new_h = int(w * scale), int(h * scale)
+                inference_frame = cv2.resize(frame, (new_w, new_h))
+                log.debug(f"Downscaled {w}x{h} -> {new_w}x{new_h} for local inference")
+            else:
+                inference_frame = frame
+                scale = 1.0
+
+            results = self.model.infer(inference_frame, confidence=self.config.confidence_threshold)
+
+            # Scale bounding boxes back to original resolution
+            if scale < 1.0:
+                scale_back = 1.0 / scale
+                if isinstance(results, list) and len(results) > 0:
+                    result_dict = results[0]
+                    if isinstance(result_dict, dict) and "predictions" in result_dict:
+                        for pred in result_dict["predictions"]:
+                            pred["x"] *= scale_back
+                            pred["y"] *= scale_back
+                            pred["width"] *= scale_back
+                            pred["height"] *= scale_back
+                elif isinstance(results, dict) and "predictions" in results:
+                    for pred in results["predictions"]:
+                        pred["x"] *= scale_back
+                        pred["y"] *= scale_back
+                        pred["width"] *= scale_back
+                        pred["height"] *= scale_back
+
         inference_time = (time.perf_counter() - inference_start) * 1000
 
         # Handle different result formats from inference API

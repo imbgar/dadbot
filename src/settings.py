@@ -98,6 +98,12 @@ class DetectionSettings(BaseModel):
     # Cloud inference (uses Roboflow GPU servers)
     use_cloud_inference: bool = True  # Use cloud GPU instead of local CPU
 
+    # InferencePipeline mode (real-time RTSP) vs OpenCV mode
+    use_inference_pipeline: bool = True  # Use InferencePipeline for RTSP streams
+
+    # Inference resolution (for frame resizing before inference)
+    inference_resolution: str = "640px max"  # Options: 320px max, 480px max, 640px max, etc.
+
 
 class LensCalibrationSettings(BaseModel):
     """Lens distortion calibration settings."""

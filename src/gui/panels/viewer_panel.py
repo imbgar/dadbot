@@ -105,7 +105,8 @@ class LiveViewerPanel(ttk.Frame):
         self._inference_pipeline: InferencePipeline | None = None
         self._pipeline_queue: queue.Queue = queue.Queue(maxsize=2)  # Small buffer
         self._pipeline_fps_monitor = sv.FPSMonitor()
-        self._use_inference_pipeline = INFERENCE_PIPELINE_AVAILABLE
+        # Load from settings, but only if InferencePipeline is available
+        self._use_inference_pipeline = INFERENCE_PIPELINE_AVAILABLE and settings.detection.use_inference_pipeline
 
         # Detection controls list (populated in _create_detection_section)
         self._detection_controls: list = []
@@ -437,7 +438,7 @@ class LiveViewerPanel(ttk.Frame):
         res_frame.pack(anchor="w", pady=(2, 2))
 
         ttk.Label(res_frame, text="Inference Res:", style="Body.TLabel").pack(side="left")
-        self.inference_res_var = tk.StringVar(value="640px max")
+        self.inference_res_var = tk.StringVar(value=self.settings.detection.inference_resolution)
         res_combo = ttk.Combobox(
             res_frame,
             textvariable=self.inference_res_var,
@@ -446,6 +447,7 @@ class LiveViewerPanel(ttk.Frame):
             state="readonly",
         )
         res_combo.pack(side="left", padx=(5, 0))
+        res_combo.bind("<<ComboboxSelected>>", self._on_inference_res_change)
         self._detection_controls.append(res_combo)
 
         # Inference FPS dropdown
@@ -716,8 +718,6 @@ class LiveViewerPanel(ttk.Frame):
 
         Note: After inference v0.9.18, result and frame can be lists for multi-source pipelines.
         """
-        # Immediate log to confirm callback is invoked
-        log.debug(f"_on_pipeline_prediction called: result_type={type(result)}, frame_type={type(frame)}")
 
         try:
             # Handle list format (v0.9.18+) - extract first item for single-source
@@ -840,7 +840,11 @@ class LiveViewerPanel(ttk.Frame):
                 def on_status_update(status):
                     event_type = status.event_type
                     payload = status.payload
-                    log.info(f"Pipeline event: {event_type} | {payload}")
+                    # Only log errors and key events, not every frame
+                    if "ERROR" in event_type or "STARTED" in event_type or "STOPPED" in event_type:
+                        log.info(f"Pipeline event: {event_type} | {payload}")
+                    else:
+                        log.debug(f"Pipeline event: {event_type}")
 
                     if "ERROR" in event_type:
                         error_msg = payload.get("error", "Unknown error")
@@ -854,13 +858,10 @@ class LiveViewerPanel(ttk.Frame):
                 prediction_callback = self._on_pipeline_prediction
 
                 def on_prediction_wrapper(result, frame):
-                    """Wrapper to ensure callback invocation is logged."""
-                    # Use print as fallback in case logging fails in thread
-                    print(f"[PREDICTION] on_prediction called: result_type={type(result)}, frame_type={type(frame)}")
+                    """Wrapper to catch exceptions in prediction callback."""
                     try:
                         prediction_callback(result, frame)
                     except Exception as e:
-                        print(f"[PREDICTION ERROR] {e}")
                         log.error(f"Exception in prediction callback: {e}", exc_info=True)
 
                 log.info(f"Creating InferencePipeline with model={model_id}, video={rtsp_url}")
@@ -1605,9 +1606,21 @@ class LiveViewerPanel(ttk.Frame):
         """Handle InferencePipeline vs OpenCV mode toggle."""
         use_pipeline = self.use_inference_pipeline_var.get()
         self._use_inference_pipeline = use_pipeline
+        self.settings.detection.use_inference_pipeline = use_pipeline
         mode = "InferencePipeline" if use_pipeline else "OpenCV"
         log.info(f"Switching to {mode} mode")
         self._update_cloud_toggle_state()
+        self.on_change()
+
+    def _on_inference_res_change(self, event=None):
+        """Handle inference resolution selection change."""
+        res_str = self.inference_res_var.get()
+        self.settings.detection.inference_resolution = res_str
+        log.info(f"Inference resolution set to: {res_str}")
+        # Reinitialize detector with new resolution if pipeline is active
+        if self._pipeline_initialized and self.video_info:
+            self._reset_pipeline()
+            self._init_pipeline(self.video_info.fps)
         self.on_change()
 
     def _update_cloud_toggle_state(self):

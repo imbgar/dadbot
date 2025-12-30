@@ -11,6 +11,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
+import numpy as np
+
 from src.gui.components import ConsoleOutput
 from src.gui.styles import COLORS, FONTS
 from src.settings import AppSettings
@@ -97,12 +99,14 @@ class ProcessorPanel(ttk.Frame):
             model_row,
             textvariable=self.model_var,
             values=[
-                "rfdetr-nano",
-                "rfdetr-base",
-                "rfdetr-large",
-                "yolov8n-640",
-                "yolov8s-640",
+                "yolov8x-640",
+                "yolov8l-640",
                 "yolov8m-640",
+                "yolov8s-640",
+                "yolov8n-640",
+                "rfdetr-large",
+                "rfdetr-base",
+                "rfdetr-nano",
             ],
             width=12,
             state="readonly",
@@ -444,27 +448,33 @@ class ProcessorPanel(ttk.Frame):
             report_path = reporter.start_session()
             self.output_queue.put(("success", f"Reports: {Path(report_path).name}"))
 
+            output_video = output_dir / f"{video_name}_annotated.mp4"
             if visualization.save_video:
-                output_video = output_dir / f"{video_name}_annotated.mp4"
-                visualizer.start_video_output(output_video)
                 self.output_queue.put(("success", f"Video: {output_video.name}"))
 
             self.output_queue.put(("info", ""))
             self.output_queue.put(("accent", "Processing started..."))
             self.output_queue.put(("info", ""))
 
-            # Process frames
+            # Process frames using sv.process_video for better I/O pipelining
             # Strategy: Run ML detection every Nth frame, but write ALL frames to output
-            # This gives normal playback speed while reducing inference load
-            frame_generator = sv.get_video_frames_generator(source_path=video_path)
             total_frames = video_info.total_frames
             inference_count = 0  # Frames with ML detection
             last_tracking_result = None  # Cache for re-using on non-detection frames
+            stopped_by_user = False
 
-            for frame_index, frame in enumerate(frame_generator):
+            class StopProcessing(Exception):
+                """Raised when user stops processing."""
+                pass
+
+            def process_frame(frame: np.ndarray, frame_index: int) -> np.ndarray:
+                """Callback for sv.process_video."""
+                nonlocal inference_count, last_tracking_result, stopped_by_user
+
+                # Check for user stop request
                 if not self.processing:
-                    self.output_queue.put(("warning", "Processing stopped by user"))
-                    break
+                    stopped_by_user = True
+                    raise StopProcessing()
 
                 try:
                     # Run ML detection only on detection frames (every frame_skip interval)
@@ -481,14 +491,11 @@ class ProcessorPanel(ttk.Frame):
                         # Re-use last tracking result for annotation (no new detection)
                         tracking_result = last_tracking_result
 
-                    # Visualize and write ALL frames for smooth playback
+                    # Visualize frame
                     if tracking_result is not None:
                         annotated_frame = visualizer.annotate_frame(frame, tracking_result)
                     else:
                         annotated_frame = frame  # No detections yet
-
-                    if visualization.save_video:
-                        visualizer.write_frame(annotated_frame)
 
                 except Exception as e:
                     # Log detection errors but continue processing
@@ -498,11 +505,11 @@ class ProcessorPanel(ttk.Frame):
                         raise  # Re-raise to stop processing if first frame fails
                     elif inference_count % 50 == 0:
                         self.output_queue.put(("warning", f"Detection error on frame {frame_index}: {e}"))
-                    # Still write the frame even if detection failed
-                    if visualization.save_video and last_tracking_result is not None:
+                    # Return annotated frame even if detection failed
+                    if last_tracking_result is not None:
                         annotated_frame = visualizer.annotate_frame(frame, last_tracking_result)
-                        visualizer.write_frame(annotated_frame)
-                    continue
+                    else:
+                        annotated_frame = frame
 
                 # Log progress every 100 frames
                 if frame_index > 0 and frame_index % 100 == 0:
@@ -522,6 +529,22 @@ class ProcessorPanel(ttk.Frame):
                         f"Vehicles: {summary.get('vehicles_counted', 0)} │ "
                         f"ETA: {eta_str}"
                     ))
+
+                return annotated_frame
+
+            # Run processing with threaded I/O (prefetch=64, writer_buffer=64)
+            try:
+                sv.process_video(
+                    source_path=video_path,
+                    target_path=str(output_video),
+                    callback=process_frame,
+                    prefetch=64,
+                    writer_buffer=64,
+                )
+                frame_index = total_frames - 1  # For timing calculation
+            except StopProcessing:
+                self.output_queue.put(("warning", "Processing stopped by user"))
+                frame_index = inference_count * frame_skip  # Approximate
 
             # Finalize
             self.output_queue.put(("info", ""))

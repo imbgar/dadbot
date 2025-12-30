@@ -76,6 +76,9 @@ class LiveViewerPanel(ttk.Frame):
         self.rtsp_max_reconnects = 5
         self.rtsp_reconnect_delay = 2000  # ms
 
+        # Webcam state
+        self.is_webcam_mode = False
+
         # ML pipeline components (lazy initialized)
         self.detector: VehicleDetector | None = None
         self.tracker: VehicleTracker | None = None
@@ -103,7 +106,7 @@ class LiveViewerPanel(ttk.Frame):
 
         # InferencePipeline for real-time RTSP (much faster than HTTP per-frame)
         self._inference_pipeline: InferencePipeline | None = None
-        self._pipeline_queue: queue.Queue = queue.Queue(maxsize=2)  # Small buffer
+        self._pipeline_queue: queue.Queue = queue.Queue(maxsize=64)  # Larger buffer for smooth playback
         self._pipeline_fps_monitor = sv.FPSMonitor()
         # Load from settings, but only if InferencePipeline is available
         self._use_inference_pipeline = INFERENCE_PIPELINE_AVAILABLE and settings.detection.use_inference_pipeline
@@ -194,34 +197,68 @@ class LiveViewerPanel(ttk.Frame):
         self._create_detection_section(scrollable_frame)
 
     def _create_video_section(self, parent):
-        """Create video/RTSP source section."""
+        """Create video source section with radio buttons for File/RTSP/Webcam."""
         section = ttk.LabelFrame(parent, text="Video Source", style="Card.TLabelframe")
         section.pack(fill="x", padx=10, pady=10)
 
         inner = ttk.Frame(section, style="CardInner.TFrame")
         inner.pack(fill="x", padx=10, pady=10)
 
-        # File loading
+        # Source type radio buttons
+        self.source_type_var = tk.StringVar(value="file")
+        radio_frame = ttk.Frame(inner, style="CardInner.TFrame")
+        radio_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Radiobutton(
+            radio_frame,
+            text="File",
+            variable=self.source_type_var,
+            value="file",
+            command=self._on_source_type_change,
+            style="Modern.TRadiobutton",
+        ).pack(side="left", padx=(0, 15))
+
+        ttk.Radiobutton(
+            radio_frame,
+            text="RTSP",
+            variable=self.source_type_var,
+            value="rtsp",
+            command=self._on_source_type_change,
+            style="Modern.TRadiobutton",
+        ).pack(side="left", padx=(0, 15))
+
+        ttk.Radiobutton(
+            radio_frame,
+            text="Webcam",
+            variable=self.source_type_var,
+            value="webcam",
+            command=self._on_source_type_change,
+            style="Modern.TRadiobutton",
+        ).pack(side="left")
+
+        # === File source frame ===
+        self.file_frame = ttk.Frame(inner, style="CardInner.TFrame")
+
         load_btn = ttk.Button(
-            inner,
+            self.file_frame,
             text="📁 Load Video File",
             command=self._load_video,
         )
         load_btn.pack(fill="x", pady=5)
 
-        ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=10)
+        # === RTSP source frame ===
+        self.rtsp_frame = ttk.Frame(inner, style="CardInner.TFrame")
 
-        # RTSP section
-        ttk.Label(inner, text="RTSP Stream:", style="Body.TLabel").pack(anchor="w")
+        ttk.Label(self.rtsp_frame, text="RTSP URL:", style="Body.TLabel").pack(anchor="w")
 
         self.rtsp_var = tk.StringVar(value=self.settings.last_rtsp_url or "")
         rtsp_entry = tk.Entry(
-            inner,
+            self.rtsp_frame,
             textvariable=self.rtsp_var,
             font=FONTS["small"],
             bg=COLORS["bg_dark"],
             fg=COLORS["text_primary"],
-            insertbackground=COLORS["text_primary"],  # Cursor color
+            insertbackground=COLORS["text_primary"],
             relief="flat",
             highlightthickness=1,
             highlightbackground=COLORS["border"],
@@ -230,8 +267,7 @@ class LiveViewerPanel(ttk.Frame):
         rtsp_entry.pack(fill="x", pady=5, ipady=4)
         rtsp_entry.bind("<Return>", lambda e: self._connect_rtsp())
 
-        # RTSP buttons
-        rtsp_btns = ttk.Frame(inner, style="CardInner.TFrame")
+        rtsp_btns = ttk.Frame(self.rtsp_frame, style="CardInner.TFrame")
         rtsp_btns.pack(fill="x", pady=5)
 
         self.rtsp_connect_btn = ttk.Button(
@@ -249,18 +285,59 @@ class LiveViewerPanel(ttk.Frame):
         )
         self.rtsp_disconnect_btn.pack(side="left", fill="x", expand=True, padx=(2, 0))
 
-        # Hint
         tk.Label(
-            inner,
+            self.rtsp_frame,
             text="e.g., rtsp://user:pass@192.168.1.100:554/stream",
             font=FONTS["small"],
             fg=COLORS["text_muted"],
             bg=COLORS["bg_medium"],
         ).pack(anchor="w")
 
+        # === Webcam source frame ===
+        self.webcam_frame = ttk.Frame(inner, style="CardInner.TFrame")
+
+        ttk.Label(self.webcam_frame, text="Camera Device:", style="Body.TLabel").pack(anchor="w")
+
+        self.webcam_device_var = tk.StringVar(value="0")
+        webcam_combo = ttk.Combobox(
+            self.webcam_frame,
+            textvariable=self.webcam_device_var,
+            values=["0", "1", "2", "3"],  # Common device indices
+            width=8,
+            state="readonly",
+            font=FONTS["small"],
+        )
+        webcam_combo.pack(anchor="w", pady=5)
+
+        webcam_btns = ttk.Frame(self.webcam_frame, style="CardInner.TFrame")
+        webcam_btns.pack(fill="x", pady=5)
+
+        self.webcam_connect_btn = ttk.Button(
+            webcam_btns,
+            text="▶ Connect",
+            command=self._connect_webcam,
+        )
+        self.webcam_connect_btn.pack(side="left", fill="x", expand=True, padx=(0, 2))
+
+        self.webcam_disconnect_btn = ttk.Button(
+            webcam_btns,
+            text="⏹ Disconnect",
+            command=self._disconnect_webcam,
+            state="disabled",
+        )
+        self.webcam_disconnect_btn.pack(side="left", fill="x", expand=True, padx=(2, 0))
+
+        tk.Label(
+            self.webcam_frame,
+            text="Device 0 is usually the built-in camera",
+            font=FONTS["small"],
+            fg=COLORS["text_muted"],
+            bg=COLORS["bg_medium"],
+        ).pack(anchor="w")
+
+        # === Status label (shared) ===
         ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=10)
 
-        # Status label
         self.video_info_label = tk.Label(
             inner,
             text="No source connected",
@@ -270,6 +347,26 @@ class LiveViewerPanel(ttk.Frame):
             wraplength=260,
         )
         self.video_info_label.pack(anchor="w", pady=5)
+
+        # Show initial source frame
+        self._on_source_type_change()
+
+    def _on_source_type_change(self):
+        """Handle source type radio button change."""
+        source_type = self.source_type_var.get()
+
+        # Hide all source frames
+        self.file_frame.pack_forget()
+        self.rtsp_frame.pack_forget()
+        self.webcam_frame.pack_forget()
+
+        # Show the selected source frame
+        if source_type == "file":
+            self.file_frame.pack(fill="x", pady=5)
+        elif source_type == "rtsp":
+            self.rtsp_frame.pack(fill="x", pady=5)
+        elif source_type == "webcam":
+            self.webcam_frame.pack(fill="x", pady=5)
 
     def _create_visualization_section(self, parent):
         """Create visualization options section."""
@@ -419,12 +516,14 @@ class LiveViewerPanel(ttk.Frame):
             model_frame,
             textvariable=self.model_var,
             values=[
-                "rfdetr-nano",
-                "rfdetr-base",
-                "rfdetr-large",
-                "yolov8n-640",
-                "yolov8s-640",
+                "yolov8x-640",
+                "yolov8l-640",
                 "yolov8m-640",
+                "yolov8s-640",
+                "yolov8n-640",
+                "rfdetr-large",
+                "rfdetr-base",
+                "rfdetr-nano",
             ],
             width=12,
             state="readonly",
@@ -764,6 +863,10 @@ class LiveViewerPanel(ttk.Frame):
                     for name in class_names
                 ])
                 detections = detections[vehicle_mask]
+
+            # Apply zone filtering if enabled
+            if len(detections) > 0 and self.settings.zone.enabled and self.settings.zone.polygon_points:
+                detections = self._filter_detections_by_zone(detections)
 
             # Update tracker
             if self.tracker and len(detections) > 0:
@@ -1111,6 +1214,7 @@ class LiveViewerPanel(ttk.Frame):
             self._stop_video()
             self._reset_pipeline()
             self.is_rtsp_mode = False
+            self.is_webcam_mode = False
 
             self.cap = cv2.VideoCapture(path)
             if not self.cap.isOpened():
@@ -1191,6 +1295,7 @@ class LiveViewerPanel(ttk.Frame):
             self._stop_video()
             self._reset_pipeline()
             self.is_rtsp_mode = True
+            self.is_webcam_mode = False
             self.rtsp_url = url
             self.rtsp_reconnect_attempts = 0
 
@@ -1333,7 +1438,110 @@ class LiveViewerPanel(ttk.Frame):
         self.canvas.delete("all")
         self.canvas.create_text(
             400, 300,
-            text="Load a video or connect to RTSP stream",
+            text="Select a video source",
+            font=FONTS["body"],
+            fill=COLORS["text_muted"],
+            tags="placeholder",
+        )
+
+    def _connect_webcam(self):
+        """Connect to a webcam device."""
+        device_idx = int(self.webcam_device_var.get())
+        log.info(f"Connecting to webcam device {device_idx}")
+
+        try:
+            self._stop_video()
+            self._reset_pipeline()
+            self.is_rtsp_mode = False
+            self.is_webcam_mode = True
+
+            self.video_info_label.configure(
+                text="Connecting to webcam...",
+                fg=COLORS["text_secondary"],
+            )
+            self.update_idletasks()
+
+            self.cap = cv2.VideoCapture(device_idx)
+
+            if not self.cap.isOpened():
+                raise ValueError(f"Could not open webcam device {device_idx}")
+
+            # Get webcam properties
+            width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
+
+            self.video_info = sv.VideoInfo(
+                width=width,
+                height=height,
+                fps=fps,
+                total_frames=0,
+            )
+
+            self.frame_delay = int(1000 / fps)
+            self.total_frames = 0
+
+            # Initialize ML pipeline
+            self._init_pipeline(fps)
+
+            log.info(f"Webcam connected: {width}x{height} @ {fps:.1f}fps")
+
+            detection_enabled = self.detection_enabled_var.get()
+            mode = "Local ML" if detection_enabled else "No ML"
+            status = f"Webcam {device_idx}\n{width}x{height} @ {fps:.1f}fps\nMode: {mode}"
+            if self._pipeline_error:
+                status += f"\nML: {self._pipeline_error}"
+                self.video_info_label.configure(text=status, fg=COLORS["warning"])
+            else:
+                self.video_info_label.configure(text=status, fg=COLORS["success"])
+
+            # Update button states
+            self.webcam_connect_btn.configure(state="disabled")
+            self.webcam_disconnect_btn.configure(state="normal")
+
+            # Disable detection controls while streaming
+            self._set_detection_controls_state(False)
+
+            # Start playback automatically
+            self.running = True
+            self.play_btn.configure(text="⏸ Pause")
+            self._play_loop()
+
+        except Exception as e:
+            log.error(f"Webcam connection failed: {e}")
+            self.is_webcam_mode = False
+            self.video_info_label.configure(
+                text=f"Connection failed:\n{e}",
+                fg=COLORS["error"],
+            )
+            if self.cap:
+                self.cap.release()
+                self.cap = None
+
+    def _disconnect_webcam(self):
+        """Disconnect from webcam."""
+        log.info("Disconnecting from webcam")
+        self._stop_video()
+        self.is_webcam_mode = False
+
+        # Update button states
+        self.webcam_connect_btn.configure(state="normal")
+        self.webcam_disconnect_btn.configure(state="disabled")
+
+        # Re-enable detection controls
+        self._set_detection_controls_state(True)
+        self._update_cloud_toggle_state()
+
+        self.video_info_label.configure(
+            text="Disconnected",
+            fg=COLORS["text_muted"],
+        )
+
+        # Clear the canvas
+        self.canvas.delete("all")
+        self.canvas.create_text(
+            400, 300,
+            text="Select a video source",
             font=FONTS["body"],
             fill=COLORS["text_muted"],
             tags="placeholder",
@@ -1432,6 +1640,10 @@ class LiveViewerPanel(ttk.Frame):
                 # RTSP stream failed - attempt reconnection
                 self.running = False
                 self._attempt_rtsp_reconnect()
+            elif self.is_webcam_mode:
+                # Webcam failed - stop
+                log.warning("Webcam stream failed")
+                self._disconnect_webcam()
             else:
                 # Video ended, loop back to beginning
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -1470,7 +1682,7 @@ class LiveViewerPanel(ttk.Frame):
             self._last_fps_update = current_time
 
         # Update frame label with FPS
-        if self.is_rtsp_mode:
+        if self.is_rtsp_mode or self.is_webcam_mode:
             self.frame_label.configure(text=f"LIVE | {self._current_fps:.1f} FPS | Frame: {self.frame_index}")
         else:
             self.frame_label.configure(text=f"{self._current_fps:.1f} FPS | Frame: {self.frame_index} / {self.total_frames}")
@@ -1546,6 +1758,37 @@ class LiveViewerPanel(ttk.Frame):
         cv2.polylines(frame, [pts], isClosed=True, color=(0, 255, 255), thickness=2)
 
         return frame
+
+    def _filter_detections_by_zone(self, detections: sv.Detections) -> sv.Detections:
+        """Filter detections to only those with >= 70% overlap with the zone.
+
+        Args:
+            detections: Vehicle detections.
+
+        Returns:
+            Filtered detections inside the zone.
+        """
+        if len(detections) == 0:
+            return detections
+
+        polygon = np.array(self.settings.zone.polygon_points, dtype=np.float32)
+        min_overlap = 0.70  # Require 70% of bounding box inside zone
+
+        zone_mask = []
+        for box in detections.xyxy:
+            x1, y1, x2, y2 = box
+            # Sample 3x3 grid of points within the box (9 points)
+            points_inside = 0
+            for i in range(3):
+                for j in range(3):
+                    px = x1 + (x2 - x1) * (0.25 + i * 0.25)
+                    py = y1 + (y2 - y1) * (0.25 + j * 0.25)
+                    if cv2.pointPolygonTest(polygon, (px, py), False) >= 0:
+                        points_inside += 1
+            overlap = points_inside / 9.0
+            zone_mask.append(overlap >= min_overlap)
+
+        return detections[np.array(zone_mask)]
 
     def _stop_video(self):
         """Stop video playback."""

@@ -61,6 +61,7 @@ logs/
 
 # Config (keep examples, ignore user settings)
 config/settings.yaml
+config/history.yaml
 
 # macOS
 .DS_Store

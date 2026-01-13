@@ -19,6 +19,10 @@
 
 ---
 
+> **⚠️ PROJECT STATUS**
+>
+> Core functionality (local model evaluation without lens correction) works well in near-real time. However, extended functionalities including lens correction, cloud execution, CLI interface, and platform support may be indefinitely broken as this project is not currently a development priority.
+
 DadBot is a traffic monitoring system designed for residential streets using side-view cameras. It detects vehicles, estimates speeds through calibration, tracks movement across frames, and generates compliance reports with metrics like vehicle counts, speeds, direction of travel, and violations.
 
 Built on [Roboflow's](https://roboflow.com) computer vision ecosystem, DadBot uses state-of-the-art RF-DETR object detection and ByteTrack multi-object tracking via the [Supervision](https://github.com/roboflow/supervision) library.

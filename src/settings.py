@@ -218,13 +218,13 @@ class AppSettings(BaseModel):
         data = self._to_serializable(self.model_dump())
 
         with open(path, "w") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
 
         # Auto-backup to history.yaml when saving main settings
         if backup_to_history and path == self.get_default_path():
             history_path = self.get_history_path()
             with open(history_path, "w") as f:
-                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+                yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
 
     @classmethod
     def load(cls, path: str | Path) -> "AppSettings":
@@ -274,6 +274,9 @@ class AppSettings(BaseModel):
             return obj.value
         elif isinstance(obj, Path):
             return str(obj)
+        # Convert numpy types to native Python types
+        elif hasattr(obj, 'item'):  # numpy scalar types have .item()
+            return obj.item()
         return obj
 
 

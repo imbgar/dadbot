@@ -23,6 +23,12 @@ DadBot is a traffic monitoring system designed for residential streets using sid
 
 Built on [Roboflow's](https://roboflow.com) computer vision ecosystem, DadBot uses state-of-the-art RF-DETR object detection and ByteTrack multi-object tracking via the [Supervision](https://github.com/roboflow/supervision) library.
 
+## Demo
+
+<p align="center">
+  <img src="assets/demo.gif" alt="DadBot Demo" width="100%"/>
+</p>
+
 ## Features
 
 - **Real-time Vehicle Detection** - RF-DETR and YOLO model support with cloud or local inference
